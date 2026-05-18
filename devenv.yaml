@@ -6,3 +6,6 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
+
+nixpkgs:
+  allow_unfree: true
