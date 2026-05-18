@@ -3,16 +3,24 @@
 let
   source_path = "/Users/hdenman/workspace/pysystemtrade";
   data_path = "/Users/hdenman/pysystemtrade-data";
+  config_path = "/Users/hdenman/workspace/life/06-AutoStockTrading/pysystemtrade_config/";
 in
 {
   # https://devenv.sh/basics/
   env.GREET = "pysystemtrade";
+
   env.PYSYS_CODE="${source_path}";
+  env.PYSYS_PRIVATE_CONFIG_DIR=config_path;
   env.SCRIPT_PATH="${source_path}/sysproduction/linux/scripts";
 
+  env.PARQUET_DATA="${data_path}/parquet/";
   env.MONGO_DATA="${data_path}/mongodb/";
   env.MONGO_BACKUP_PATH="${data_path}/mongo_backup";
+
   env.ECHO_PATH="${data_path}/echos";
+  env.LOG_PATH="${data_path}/logs";
+
+
 
   # https://devenv.sh/packages/
   packages = [ pkgs.git ];
