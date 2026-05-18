@@ -33,7 +33,7 @@ def main():
     instrument_code = 'SOFR'
     price=data.daily_prices(instrument_code)
     ewmac = calc_ewmac_forecast(price, 32, 128)
-    ewmac.tail(5)
+    print(ewmac.tail(5))
 
     ewmac.plot()
     show()

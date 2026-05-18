@@ -1,8 +1,18 @@
 { pkgs, lib, config, inputs, ... }:
 
+let
+  source_path = "/Users/hdenman/workspace/pysystemtrade";
+  data_path = "/Users/hdenman/pysystemtrade-data";
+in
 {
   # https://devenv.sh/basics/
-  env.GREET = "devenv";
+  env.GREET = "pysystemtrade";
+  env.PYSYS_CODE="${source_path}";
+  env.SCRIPT_PATH="${source_path}/sysproduction/linux/scripts";
+
+  env.MONGO_DATA="${data_path}/mongodb/";
+  env.MONGO_BACKUP_PATH="${data_path}/mongo_backup";
+  env.ECHO_PATH="${data_path}/echos";
 
   # https://devenv.sh/packages/
   packages = [ pkgs.git ];
@@ -14,7 +24,9 @@
   # processes.dev.exec = "${lib.getExe pkgs.watchexec} -n -- ls -la";
 
   # https://devenv.sh/services/
-  # services.postgres.enable = true;
+  services.mongodb = {
+    enable = true;
+  };
 
   # https://devenv.sh/scripts/
   scripts.hello.exec = ''
@@ -43,9 +55,6 @@
   # git-hooks.hooks.shellcheck.enable = true;
 
   # See full reference at https://devenv.sh/reference/options/
-  services.mongodb = {
-    enable = true;
-  };
 
   languages.python = {
     enable = true;
