@@ -1,6 +1,8 @@
 from syscore.constants import arg_not_supplied
 from syscore.dateutils import MIXED_FREQ, HOURLY_FREQ, DAILY_PRICE_FREQ
+from syscore.fileutils import resolve_path_and_filename_for_package
 from syscore.pandas.frequency import merge_data_with_different_freq
+from sysdata.config.production_config import get_production_config
 from sysdata.csv.csv_futures_contract_prices import ConfigCsvFuturesPrices
 from sysdata.csv.csv_futures_contract_prices import csvFuturesContractPriceData
 from sysobjects.contracts import futuresContract
@@ -158,8 +160,11 @@ def write_prices_for_contract_at_frequency(
 
 if __name__ == "__main__":
     input("Will overwrite existing prices are you sure?! CTL-C to abort")
-    # modify flags as required
-    datapath = "*** NEED TO DEFINE A DATAPATH***"
+
+    datapath = resolve_path_and_filename_for_package(
+        get_production_config().get_element_or_default("barchart_path", None)
+    )
+
     do_another = True
     while do_another:
         EXIT_STR = "Finished: Exit"
