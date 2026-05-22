@@ -11,6 +11,7 @@ from syscore.fileutils import (
 from syscore.constants import arg_not_supplied
 from syscore.dateutils import MIXED_FREQ, Frequency
 from syscore.pandas.pdutils import pd_readcsv, DEFAULT_DATE_FORMAT_FOR_CSV
+import pandas as pd
 
 
 @dataclass
@@ -94,6 +95,8 @@ class csvFuturesContractPriceData(futuresContractPriceData):
                 **futures_contract_object.log_attributes(),
                 method="temp",
             )
+            return futuresContractPrices.create_empty()
+        except pd.errors.EmptyDataError:
             return futuresContractPrices.create_empty()
         except ValueError as e:
             self.log.error(
