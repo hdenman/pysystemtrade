@@ -58,6 +58,7 @@ def build_and_write_roll_calendar(
         dict_of_futures_contract_prices, roll_parameters
     )
 
+    roll_calendar = roll_calendar.trim_duplicate_initial_dates()
     # checks - this might fail
     roll_calendar.check_if_date_index_monotonic()
 
@@ -69,7 +70,7 @@ def build_and_write_roll_calendar(
     if write:
         if check_before_writing:
             check_happy_to_write = true_if_answer_is_yes(
-                "Are you ok to write this csv to path %s/%s.csv? [might be worth writing and hacking manually]?"
+                "Write to %s/%s.csv <yes to confim>? "
                 % (csv_roll_calendars.datapath, instrument_code)
             )
         else:
@@ -108,6 +109,7 @@ def check_saved_roll_calendar(
     )
     dict_of_futures_contract_prices = dict_of_all_futures_contract_prices.final_prices()
 
+    roll_calendar = roll_calendar.trim_duplicate_initial_dates()
     print(roll_calendar)
 
     # checks - this might fail
@@ -120,8 +122,7 @@ def check_saved_roll_calendar(
 
 
 if __name__ == "__main__":
-    input("Will overwrite existing roll calendar are you sure?! CTL-C to abort")
+    print("Will overwrite existing roll calendar. CTL-C to abort.")
+
     instrument_code = get_valid_instrument_code_from_user(source="single")
-    ## MODIFY DATAPATH IF REQUIRED
-    # build_and_write_roll_calendar(instrument_code, output_datapath=arg_not_supplied)
-    build_and_write_roll_calendar(instrument_code, output_datapath="/home/rob/")
+    build_and_write_roll_calendar(instrument_code)

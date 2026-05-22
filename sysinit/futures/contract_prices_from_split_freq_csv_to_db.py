@@ -159,7 +159,7 @@ def write_prices_for_contract_at_frequency(
 
 
 if __name__ == "__main__":
-    input("Will overwrite existing prices are you sure?! CTL-C to abort")
+    print("Will overwrite existing prices. CTL-C to abort.")
 
     datapath = resolve_path_and_filename_for_package(
         get_production_config().get_element_or_default("barchart_path", None)

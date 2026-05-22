@@ -78,6 +78,25 @@ class rollCalendar(pd.DataFrame):
 
         return roll_calendar_object
 
+    def trim_duplicate_initial_dates(self) -> "rollCalendar":
+        """
+        If the earliest date in the index appears on multiple rows (which happens
+        when a calendar is built from a price history that starts mid-stream, so
+        several already-live contracts share the same first observation date), keep
+        only the last such row.  That row carries the most-recently-rolled contract
+        and is the one that matters going forward.  Earlier rows for the same date
+        are logically prior rolls that pre-date our price history and cannot be used.
+        """
+        if len(self.index) == 0:
+            return self
+        first_date = self.index[0]
+        # searchsorted(..., side="right") returns the position *after* the last
+        # occurrence of first_date, so [n-1] is that last occurrence.
+        n = self.index.searchsorted(first_date, side="right")
+        if n <= 1:
+            return self
+        return rollCalendar(self.iloc[n - 1 :])
+
     def check_if_date_index_monotonic(self) -> bool:
         if not self.index._is_strictly_monotonic_increasing:
             print(
