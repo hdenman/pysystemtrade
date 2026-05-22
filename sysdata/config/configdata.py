@@ -13,6 +13,7 @@ trading_rules - a specification of the trading rules for a system
 """
 
 import yaml
+import os
 
 from syscore.exceptions import missingData
 from syscore.fileutils import resolve_path_and_filename_for_package
@@ -33,6 +34,17 @@ RESERVED_NAMES = [
     "_private_filename",
 ]
 
+
+
+def _expand_env_vars(obj):
+    """Recursively expand environment variables (e.g. ${HOME}) in all string values."""
+    if isinstance(obj, str):
+        return os.path.expandvars(obj)
+    elif isinstance(obj, dict):
+        return {k: _expand_env_vars(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_expand_env_vars(item) for item in obj]
+    return obj
 
 class Config(object):
     def __init__(
@@ -164,6 +176,7 @@ class Config(object):
         So if config_object=dict(a=2, b=2)
         Then this object will become self.a=2, self.b=2
         """
+        config_object = _expand_env_vars(config_object)
         base_config = config_object.get("base_config")
         if base_config is not None:
             self._create_config_from_item(base_config)
