@@ -1,37 +1,61 @@
 """
-Report the contents of the configured MongoDB instance.
+Report the contents of the configured data stores.
 
-Read-only utility that enumerates the live collections in the configured
-database and prints per-collection document counts, storage sizes, and
-index counts. Connection precedence (arguments > ``private_config.yaml``
-> ``defaults.yaml``) is delegated to :class:`sysdata.mongodb.mongo_connection.mongoDb`.
+Read-only utility that summarises:
+
+* the live MongoDB database (collections, document counts, storage sizes), and
+* the contract price parquet store (per-instrument contract counts, price
+  ranges, total observations).
+
+Connection precedence (arguments > ``private_config.yaml`` > ``defaults.yaml``)
+is delegated to :class:`sysdata.mongodb.mongo_connection.mongoDb` for Mongo and
+to ``get_production_config().get_element("parquet_store")`` for the parquet
+root, mirroring :class:`sysdata.data_blob.dataBlob`.
 
 Run as a module::
 
     python -m util.db_status
     python -m util.db_status --sample 1
     python -m util.db_status --db production --host 127.0.0.1 --port 27017
+    python -m util.db_status --parquet-store /tmp/parquet
 """
 
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from pymongo.errors import PyMongoError
 
 from syscore.constants import arg_not_supplied
+from syscore.exceptions import missingData
+from sysdata.config.production_config import get_production_config
 from sysdata.mongodb.mongo_connection import clean_mongo_host, mongoDb
+from sysdata.parquet.parquet_futures_per_contract_prices import (
+    CONTRACT_COLLECTION,
+    from_key_to_freq_and_contract,
+)
 
 _KB = 1024
 _TOTALS_LABEL = "TOTAL"
-_COLUMNS = [
+_PARQUET_INDEX_COLUMN = "index"
+_MONGO_COLUMNS = [
     "collection",
     "documents",
     "size_kb",
     "storage_kb",
     "indexes",
     "index_size_kb",
+]
+_PRICE_COLUMNS = [
+    "instrument",
+    "contracts",
+    "first_price",
+    "last_price",
+    "prices",
 ]
 
 
@@ -61,8 +85,8 @@ def report_db_status(
     names = sorted(handle.db.list_collection_names())
     table = _build_table(handle.db, names)
 
-    _print_header(handle, table)
-    _print_table(table)
+    _print_mongo_header(handle, table)
+    _print_table(table, empty_message="(no collections)")
     if sample > 0:
         _print_samples(handle.db, names, sample)
 
@@ -71,7 +95,7 @@ def report_db_status(
 
 def _build_table(db, names: list[str]) -> pd.DataFrame:
     rows = [_collection_row(db, name) for name in names]
-    table = pd.DataFrame(rows, columns=_COLUMNS)
+    table = pd.DataFrame(rows, columns=_MONGO_COLUMNS)
     table = table.sort_values("documents", ascending=False, na_position="last")
     totals = {
         "collection": _TOTALS_LABEL,
@@ -82,7 +106,8 @@ def _build_table(db, names: list[str]) -> pd.DataFrame:
         "index_size_kb": table["index_size_kb"].sum(),
     }
     return pd.concat(
-        [table, pd.DataFrame([totals], columns=_COLUMNS)], ignore_index=True
+        [table, pd.DataFrame([totals], columns=_MONGO_COLUMNS)],
+        ignore_index=True,
     )
 
 
@@ -115,7 +140,7 @@ def _collection_row(db, name: str) -> dict:
     }
 
 
-def _print_header(handle: mongoDb, table: pd.DataFrame) -> None:
+def _print_mongo_header(handle: mongoDb, table: pd.DataFrame) -> None:
     body = table[table["collection"] != _TOTALS_LABEL]
     print(
         "MongoDB status — host=%s, db=%s"
@@ -127,10 +152,10 @@ def _print_header(handle: mongoDb, table: pd.DataFrame) -> None:
     )
 
 
-def _print_table(table: pd.DataFrame) -> None:
-    # Only the appended TOTAL row → no real collections.
+def _print_table(table: pd.DataFrame, *, empty_message: str) -> None:
+    # Only the appended TOTAL row → no real rows worth showing.
     if len(table) <= 1:
-        print("(no collections)")
+        print(empty_message)
         return
     with pd.option_context(
         "display.max_rows", None,
@@ -149,9 +174,155 @@ def _print_samples(db, names: list[str], sample: int) -> None:
             print(json.dumps(doc, default=str, indent=2, sort_keys=True))
 
 
+def report_contract_prices_status(
+    parquet_store: str = arg_not_supplied,
+) -> pd.DataFrame:
+    """Print and return per-instrument contract-price stats from the parquet store.
+
+    Each row of the returned DataFrame represents one instrument. Multiple
+    frequencies (``Day@``, ``Hour@``, mixed) for the same ``(instrument, expiry)``
+    pair count as a single contract. A TOTAL row is appended.
+
+    Per-file row counts and min/max timestamps come from the parquet footer
+    (``num_rows`` + ``index`` column statistics) — no price data is read.
+
+    :param parquet_store: parquet root override (default: ``parquet_store`` config)
+    :return: DataFrame with columns ``instrument, contracts, first_price,
+        last_price, prices``, plus an appended TOTAL row
+    :raises syscore.exceptions.missingData: if no parquet store is configured
+    """
+    root = _resolve_parquet_store(parquet_store)
+    contracts_dir = Path(root) / CONTRACT_COLLECTION
+    print(f"Contract prices — store={root}")
+
+    if not contracts_dir.is_dir():
+        print(f"(missing {CONTRACT_COLLECTION}/ subdirectory)")
+        return _empty_prices_table()
+
+    summaries = [
+        _parquet_file_summary(path)
+        for path in sorted(contracts_dir.glob("*.parquet"))
+    ]
+    table = _aggregate_prices_by_instrument(summaries)
+    _print_prices_summary(table)
+    _print_table(table, empty_message="(no contract price files)")
+    return table
+
+
+def _resolve_parquet_store(parquet_store) -> str:
+    if parquet_store is not arg_not_supplied:
+        return str(parquet_store)
+    return get_production_config().get_element("parquet_store")
+
+
+def _parquet_file_summary(path: Path) -> dict:
+    """Extract (instrument, expiry, row count, min/max ts) from a parquet footer."""
+    instrument, date_str = _parse_contract_ident(path.stem)
+    try:
+        metadata = pq.read_metadata(str(path))
+    except (OSError, pa.ArrowInvalid):
+        return {
+            "instrument": instrument,
+            "date_str": date_str,
+            "rows": 0,
+            "min_ts": pd.NaT,
+            "max_ts": pd.NaT,
+        }
+    min_ts, max_ts = _index_range_from_metadata(metadata)
+    return {
+        "instrument": instrument,
+        "date_str": date_str,
+        "rows": metadata.num_rows,
+        "min_ts": min_ts,
+        "max_ts": max_ts,
+    }
+
+
+def _parse_contract_ident(stem: str) -> tuple[str, str]:
+    """``[FREQ@]INSTRUMENT#DATE`` → ``(INSTRUMENT, DATE)``.
+
+    Delegates to the canonical parser in :mod:`sysdata.parquet.parquet_futures_per_contract_prices`
+    so any future change to the on-disk key format is honoured automatically.
+    """
+    _, contract = from_key_to_freq_and_contract(stem)
+    return contract.instrument_code, contract.date_str
+
+
+def _index_range_from_metadata(metadata) -> tuple:
+    """Min/max of the ``index`` (timestamp) column from parquet row-group stats."""
+    mins: list = []
+    maxs: list = []
+    for rg_idx in range(metadata.num_row_groups):
+        rg = metadata.row_group(rg_idx)
+        for col_idx in range(rg.num_columns):
+            col = rg.column(col_idx)
+            if col.path_in_schema != _PARQUET_INDEX_COLUMN:
+                continue
+            stats = col.statistics
+            if stats is None or not stats.has_min_max:
+                continue
+            mins.append(stats.min)
+            maxs.append(stats.max)
+            break
+    if not mins:
+        return pd.NaT, pd.NaT
+    return pd.Timestamp(min(mins)), pd.Timestamp(max(maxs))
+
+
+def _aggregate_prices_by_instrument(summaries: list[dict]) -> pd.DataFrame:
+    if not summaries:
+        return _empty_prices_table()
+    files = pd.DataFrame(summaries)
+    contracts = (
+        files.drop_duplicates(["instrument", "date_str"])
+        .groupby("instrument")
+        .size()
+        .rename("contracts")
+    )
+    aggregated = files.groupby("instrument").agg(
+        first_price=("min_ts", "min"),
+        last_price=("max_ts", "max"),
+        prices=("rows", "sum"),
+    )
+    table = (
+        aggregated.join(contracts)
+        .reset_index()[_PRICE_COLUMNS]
+        .sort_values("prices", ascending=False, na_position="last")
+    )
+    totals = {
+        "instrument": _TOTALS_LABEL,
+        "contracts": int(table["contracts"].sum()),
+        "first_price": table["first_price"].min(),
+        "last_price": table["last_price"].max(),
+        "prices": int(table["prices"].sum()),
+    }
+    return pd.concat(
+        [table, pd.DataFrame([totals], columns=_PRICE_COLUMNS)],
+        ignore_index=True,
+    )
+
+
+def _empty_prices_table() -> pd.DataFrame:
+    return pd.DataFrame(columns=_PRICE_COLUMNS)
+
+
+def _print_prices_summary(table: pd.DataFrame) -> None:
+    body = table[table["instrument"] != _TOTALS_LABEL]
+    print(
+        "instruments=%d, contracts=%d, prices=%d"
+        % (
+            len(body),
+            int(body["contracts"].sum()),
+            int(body["prices"].sum()),
+        )
+    )
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Report the contents of the configured MongoDB instance.",
+        description=(
+            "Report MongoDB collections and contract-price parquet contents."
+        ),
     )
     parser.add_argument(
         "--db",
@@ -179,11 +350,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="N",
         help="Print up to N sample documents per collection (default: 0)",
     )
+    parser.add_argument(
+        "--parquet-store",
+        dest="parquet_store",
+        default=arg_not_supplied,
+        metavar="PATH",
+        help="Parquet store root override",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    failures = 0
     try:
         report_db_status(
             mongo_db=args.mongo_db,
@@ -193,8 +372,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     except PyMongoError as exc:
         print(f"MongoDB unreachable: {exc}", file=sys.stderr)
-        return 1
-    return 0
+        failures += 1
+
+    print()
+    try:
+        report_contract_prices_status(parquet_store=args.parquet_store)
+    except missingData as exc:
+        print(f"Contract prices unavailable: {exc}", file=sys.stderr)
+        failures += 1
+
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
