@@ -7,11 +7,31 @@ from sysdata.csv.csv_roll_calendars import csvRollCalendarData
 from sysdata.csv.csv_roll_parameters import csvRollParametersData
 from sysdata.futures.rolls_parameters import rollParametersData
 from sysproduction.data.prices import get_valid_instrument_code_from_user, diagPrices
+from sysobjects.roll_parameters_with_price_data import get_and_clear_roll_warnings
 
 
 diag_prices = diagPrices()
 
 parquet_futures_contract_price_data = diag_prices.db_futures_contract_price_data
+
+
+def _print_roll_warnings_summary(warnings) -> None:
+    if not warnings:
+        return
+    from collections import defaultdict
+    by_missing: dict = defaultdict(list)
+    for w in warnings:
+        by_missing[w.missing_contract].append(w)
+    total = len(warnings)
+    print(
+        f"\nRoll calendar: {total} contract lookup(s) skipped "
+        f"(not in price data, roll cycle adjusted):"
+    )
+    for missing_contract, ws in sorted(by_missing.items()):
+        details = ", ".join(
+            f"{w.direction} ({w.contract_type}) from {w.from_contract}" for w in ws
+        )
+        print(f"  {missing_contract}: {details}")
 
 """
 Generate a 'best guess' roll calendar based on some price data for individual contracts
@@ -64,6 +84,8 @@ def build_and_write_roll_calendar(
 
     # this should never fail
     roll_calendar.check_dates_are_valid_for_prices(dict_of_futures_contract_prices)
+
+    _print_roll_warnings_summary(get_and_clear_roll_warnings())
 
     # Write to csv
     # Will not work if an existing calendar exists

@@ -107,7 +107,6 @@ def _create_approx_calendar_from_earliest_contract(
 
         roll_calendar_as_list.append(new_row)
         current_contract = copy(next_contract)
-        print(current_contract)
 
     roll_calendar = roll_calendar_as_list.to_pd_df()
 
@@ -524,14 +523,16 @@ def _print_data_at_start_not_valid_flag(local_row_data: localRowData):
 def _print_adjustment_message(
     local_row_data: localRowData, adjusted_row: _rollCalendarRow
 ):
-    print(
-        "Changed date from %s to %s for row with contracts %s"
-        % (
-            str(local_row_data.current_row.name),
-            str(adjusted_row.roll_date),
-            str(adjusted_row.items()),
+    approx_date = local_row_data.current_row.name
+    new_date = adjusted_row.roll_date
+    current = adjusted_row["current_contract"]
+    next_ = adjusted_row["next_contract"]
+    carry = adjusted_row["carry_contract"]
+    if approx_date.date() != new_date.date():
+        print(
+            f"  {current}/{next_} (carry {carry}): "
+            f"{approx_date.strftime('%Y-%m-%d')} → {new_date.strftime('%Y-%m-%d')}"
         )
-    )
 
 
 def _add_carry_calendar(

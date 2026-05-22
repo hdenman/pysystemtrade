@@ -1,4 +1,5 @@
 import datetime
+from typing import NamedTuple
 from syscore.exceptions import missingData
 from sysobjects.rolls import contractDateWithRollParameters, rollParameters
 from sysobjects.contracts import contractDate
@@ -6,6 +7,25 @@ from sysobjects.dict_of_futures_per_contract_prices import (
     dictFuturesContractFinalPrices,
 )
 from sysobjects.contract_dates_and_expiries import listOfContractDateStr
+
+
+
+class _RollSkipWarning(NamedTuple):
+    direction: str       # "next" or "previous"
+    from_contract: str
+    missing_contract: str
+    contract_type: str   # HELD or PRICED
+    roll_cycle: str
+
+
+_pending_roll_warnings: list[_RollSkipWarning] = []
+
+
+def get_and_clear_roll_warnings() -> list[_RollSkipWarning]:
+    """Drain and return all warnings accumulated since the last call."""
+    result = list(_pending_roll_warnings)
+    _pending_roll_warnings.clear()
+    return result
 
 HELD = "held"
 PRICED = "priced"
@@ -127,16 +147,14 @@ class contractWithRollParametersAndPrices(object):
                     roll_cycle = self.roll_parameters.hold_rollcycle
                 else:
                     roll_cycle = self.roll_parameters.priced_rollcycle
-                print(
-                    "Warning! After",
-                    self.date_str,
-                    "the next expected contract",
-                    try_contract.date_str,
-                    "in the",
-                    contract_type,
-                    "roll cycle (",
-                    roll_cycle,
-                    ") not available! (OK if this is at the end of the calendar)",
+                _pending_roll_warnings.append(
+                    _RollSkipWarning(
+                        direction="next",
+                        from_contract=self.date_str,
+                        missing_contract=try_contract.date_str,
+                        contract_type=contract_type,
+                        roll_cycle=str(roll_cycle),
+                    )
                 )
             try_contract = getattr(try_contract, contract_attribute_str)()
 
@@ -187,16 +205,14 @@ class contractWithRollParametersAndPrices(object):
                     roll_cycle = self.roll_parameters.hold_rollcycle
                 else:
                     roll_cycle = self.roll_parameters.priced_rollcycle
-                print(
-                    "Warning! Before",
-                    self.date_str,
-                    "the previous expected contract",
-                    try_contract.date_str,
-                    "in the",
-                    contract_type,
-                    "roll cycle (",
-                    roll_cycle,
-                    ") not available! (OK if this is at the end of the calendar)",
+                _pending_roll_warnings.append(
+                    _RollSkipWarning(
+                        direction="previous",
+                        from_contract=self.date_str,
+                        missing_contract=try_contract.date_str,
+                        contract_type=contract_type,
+                        roll_cycle=str(roll_cycle),
+                    )
                 )
             try_contract = getattr(try_contract, contract_attribute_str)()
 
