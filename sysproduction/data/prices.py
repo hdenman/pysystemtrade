@@ -395,7 +395,10 @@ def get_valid_instrument_code_from_user(
     input_prompt = input_prompt + ": "
 
     while invalid_input:
-        instrument_code = input(input_prompt)
+        try:
+            instrument_code = input(input_prompt)
+        except EOFError:
+            raise SystemExit(0)
 
         if allow_all:
             if instrument_code == "" or instrument_code == "ALL":
