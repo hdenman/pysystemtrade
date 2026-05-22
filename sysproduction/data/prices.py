@@ -387,11 +387,13 @@ def get_valid_instrument_code_from_user(
         data = dataBlob()
     instrument_code_list = get_list_of_instruments(data, source=source)
     invalid_input = True
-    input_prompt = "Instrument code?"
+    input_prompt = "Enter instrument code"
     if allow_all:
-        input_prompt = input_prompt + "(Return for ALL)"
+        input_prompt = input_prompt + " (Return for all)"
     elif allow_exit:
-        input_prompt = input_prompt + "(Return to EXIT)"
+        input_prompt = input_prompt + " (Return to exit)"
+    input_prompt = input_prompt + ": "
+
     while invalid_input:
         instrument_code = input(input_prompt)
 

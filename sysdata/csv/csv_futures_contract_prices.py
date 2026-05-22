@@ -95,6 +95,14 @@ class csvFuturesContractPriceData(futuresContractPriceData):
                 method="temp",
             )
             return futuresContractPrices.create_empty()
+        except ValueError as e:
+            self.log.error(
+                "Failed to parse %s" % filename,
+                **futures_contract_object.log_attributes(),
+                method="temp",
+            )
+            raise
+
 
         instrpricedata = instrpricedata.groupby(level=0).last()
         for col_name in ["OPEN", "HIGH", "LOW", "FINAL"]:
