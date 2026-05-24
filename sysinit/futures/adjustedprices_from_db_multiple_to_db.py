@@ -9,7 +9,7 @@ from sysdata.csv.csv_adjusted_prices import csvFuturesAdjustedPricesData
 
 from sysobjects.adjusted_prices import futuresAdjustedPrices
 
-from sysproduction.data.prices import diagPrices
+from sysproduction.data.prices import diagPrices, get_valid_instrument_code_from_user
 
 diag_prices = diagPrices()
 
@@ -69,9 +69,32 @@ def process_adjusted_prices_single_instrument(
     return adjusted_prices
 
 
-if __name__ == "__main__":
-    input("Will overwrite existing prices are you sure?! CTL-C to abort")
-    # modify flags and datapath as required
+def bulk_update():
+    input("Will overwrite existing prices. CTL-C to abort.")
     process_adjusted_prices_all_instruments(
-        csv_adj_data_path=arg_not_supplied, ADD_TO_DB=True, ADD_TO_CSV=True
+        csv_adj_data_path=arg_not_supplied, ADD_TO_DB=True, ADD_TO_CSV=False
     )
+
+
+def individual_update():
+    print("Will overwrite existing prices. CTL-C to abort.")
+    do_another = True
+    while do_another:
+        EXIT_STR = "Finished: Exit"
+        instrument_code = get_valid_instrument_code_from_user(
+            source="single", allow_exit=True, exit_code=EXIT_STR
+        )
+        if instrument_code is EXIT_STR:
+            do_another = False
+        else:
+            process_adjusted_prices_single_instrument(
+                instrument_code,
+                csv_adj_data_path=arg_not_supplied,
+                ADD_TO_DB=True,
+                ADD_TO_CSV=False,
+            )
+
+
+if __name__ == "__main__":
+    # bulk_update()
+    individual_update()
