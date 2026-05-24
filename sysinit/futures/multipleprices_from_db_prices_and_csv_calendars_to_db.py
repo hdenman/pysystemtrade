@@ -17,7 +17,7 @@ from sysobjects.dict_of_futures_per_contract_prices import (
 import datetime
 import pandas as pd
 
-from sysproduction.data.prices import diagPrices
+from sysproduction.data.prices import diagPrices, get_valid_instrument_code_from_user
 from sysobjects.rolls import rollParameters, contractDateWithRollParameters
 from sysobjects.contract_dates_and_expiries import contractDate
 
@@ -26,7 +26,6 @@ from sysdata.csv.csv_multiple_prices import csvFuturesMultiplePricesData
 from sysdata.csv.csv_roll_parameters import csvRollParametersData
 from sysinit.futures.build_roll_calendars import adjust_to_price_series
 from sysobjects.multiple_prices import futuresMultiplePrices
-
 
 diag_prices = diagPrices()
 
@@ -188,8 +187,8 @@ def add_phantom_row(
     return roll_calendar
 
 
-if __name__ == "__main__":
-    input("Will overwrite existing prices are you sure?! CTL-C to abort")
+def bulk_update():
+    input("Will overwrite existing prices. CTL-C to abort.")
     # change if you want to write elsewhere
     csv_multiple_data_path = arg_not_supplied
 
@@ -201,3 +200,32 @@ if __name__ == "__main__":
         csv_multiple_data_path=csv_multiple_data_path,
         csv_roll_data_path=csv_roll_data_path,
     )
+
+
+def individual_update():
+    print("Will overwrite existing prices. CTL-C to abort.")
+
+    do_another = True
+    while do_another:
+        EXIT_STR = "Finished: Exit"
+        instrument_code = get_valid_instrument_code_from_user(
+            source="single", allow_exit=True, exit_code=EXIT_STR
+        )
+        if instrument_code is EXIT_STR:
+            do_another = False
+        else:
+            process_multiple_prices_single_instrument(
+                instrument_code,
+                target_instrument_code=arg_not_supplied,
+                adjust_calendar_to_prices=True,
+                csv_multiple_data_path=arg_not_supplied,
+                csv_roll_data_path=arg_not_supplied,
+                roll_parameters=arg_not_supplied,
+                roll_calendar=arg_not_supplied,
+                ADD_TO_DB=True,
+                ADD_TO_CSV=False,
+            )
+
+if __name__ == "__main__":
+    # bulk_update()
+    individual_update()
