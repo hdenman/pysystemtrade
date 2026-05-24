@@ -9,17 +9,22 @@ Investing.com CSV format assumptions:
   - Rows in reverse-chronological order
 
 Filename → fx code mapping:
-  "EUR_USD Historical Data.csv" → "EURUSD"
-  (strip " Historical Data", remove underscores, uppercase)
+  "EUR_USD Historical Data.csv" → "EURUSD"   (as-is: USD per EUR)
+  "GBP_USD Historical Data.csv" → "GBPUSD"   (as-is: USD per GBP)
+  "USD_CNH Historical Data.csv" → "CNHUSD"   (reciprocal: file holds CNH per USD)
+
+  USD-base detection: if the pair starts with "USD_" after stripping
+  " Historical Data", prices are inverted (1/price) before merging.
 """
 
 import argparse
 import os
+import logging
 
 import pandas as pd
 
 from sysdata.csv.csv_spot_fx import csvFxPricesData
-from sysproduction.data.currency_data import fxPricesData
+from sysproduction.data.currency_data import dataCurrency
 from sysobjects.spot_fx_prices import fxPrices
 
 INVESTING_DOT_COM_DATE_COLUMN = "Date"
@@ -36,17 +41,34 @@ def _investingdotcom_stem_to_code(stem: str) -> str:
     """
     Convert an investing.com CSV file stem to an fx code.
 
-    "EUR_USD Historical Data" -> "EURUSD"
+    "EUR_USD Historical Data" -> "EURUSD"   (USD per EUR, no inversion)
+    "USD_CNH Historical Data" -> "CNHUSD"   (CNH per USD, needs inversion)
     """
-    return stem.replace(" Historical Data", "").replace("_", "").upper()
+    pair = stem.replace(" Historical Data", "")
+    if pair.upper().startswith("USD_"):
+        foreign = pair.split("_")[1]
+        return (foreign + "USD").upper()
+    return pair.replace("_", "").upper()
 
 
-def _read_investingdotcom_file(filepath: str) -> fxPrices:
+def _investingdotcom_stem_needs_invert(stem: str) -> bool:
+    """Return True when the file records foreign-per-USD (must be inverted)."""
+    pair = stem.replace(" Historical Data", "")
+    return pair.upper().startswith("USD_")
+
+
+def _read_investingdotcom_file(filepath: str, invert: bool = False) -> fxPrices:
     """
     Read an investing.com-format CSV and return a sorted fxPrices series.
 
     Handles UTF-8 BOM, reverse-chronological ordering, and the
     investing.com-specific Date / Price column names.
+
+    Parameters
+    ----------
+    invert : bool
+        When True the file records prices as foreign-per-USD; apply 1/price
+        so the series is in USD-per-foreign convention.
     """
     df = pd.read_csv(filepath, encoding="utf-8-sig")
     price_series = df[INVESTING_DOT_COM_PRICE_COLUMN].astype(float)
@@ -54,15 +76,21 @@ def _read_investingdotcom_file(filepath: str) -> fxPrices:
         df[INVESTING_DOT_COM_DATE_COLUMN], format=INVESTING_DOT_COM_DATE_FORMAT
     )
     price_series.index.name = "index"
+    if invert:
+        price_series = 1.0 / price_series
     return fxPrices(price_series.sort_index())
 
 
 def _discover_investingdotcom_codes(datapath: str) -> dict:
     """
-    Scan *datapath* for *.csv files and return {fx_code: filepath}.
+    Scan *datapath* for *.csv files and return {fx_code: (filepath, invert)}.
 
     Only files whose name contains " Historical Data" are considered, so
     stray CSVs in the same directory are silently ignored.
+
+    The ``invert`` flag in the tuple is True for USD-base files (e.g.
+    ``USD_CNH Historical Data.csv``) where prices must be reciprocated before
+    merging into the pysystemtrade USD-per-foreign convention.
     """
     result = {}
     for entry in os.scandir(datapath):
@@ -72,7 +100,7 @@ def _discover_investingdotcom_codes(datapath: str) -> dict:
         if "Historical Data" not in stem:
             continue
         code = _investingdotcom_stem_to_code(stem)
-        result[code] = entry.path
+        result[code] = (entry.path, _investingdotcom_stem_needs_invert(stem))
     return result
 
 
@@ -99,7 +127,7 @@ def spotfx_from_csv_and_investing_dot_com(
     """
     new_data_by_code = _discover_investingdotcom_codes(datapath)
     my_csv_fx_prices_data = csvFxPricesData()
-    db_fx_prices_data = fxPricesData()
+    db_fx_prices_data = dataCurrency().db_fx_prices_data
 
     list_of_ccy_codes = my_csv_fx_prices_data.get_list_of_fxcodes()
 
@@ -108,7 +136,8 @@ def spotfx_from_csv_and_investing_dot_com(
         n_existing = len(existing)
 
         if currency_code in new_data_by_code:
-            new = _read_investingdotcom_file(new_data_by_code[currency_code])
+            filepath, invert = new_data_by_code[currency_code]
+            new = _read_investingdotcom_file(filepath, invert=invert)
             n_new = len(new)
 
             # new data wins on overlap: concat existing then new, keep last
@@ -122,8 +151,8 @@ def spotfx_from_csv_and_investing_dot_com(
             n_merged = len(merged)
 
             print(
-                f"{currency_code}: existing={n_existing} rows, "
-                f"new={n_new} rows, merged={n_merged} rows"
+                f"{currency_code}: existing={n_existing}, "
+                f"file={n_new}, added={n_merged - n_existing}, total={n_merged}"
             )
 
             if ADD_TO_CSV:
@@ -174,7 +203,15 @@ if __name__ == "__main__":
         default=False,
         help="Skip overwriting the pysystemtrade CSV files.",
     )
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("PYSYSTEMTRADE_LOG_LEVEL", "ERROR"),
+        metavar="LEVEL",
+        help="Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL). "
+             "Also read from $PYSYSTEMTRADE_LOG_LEVEL. Default: ERROR.",
+    )
     args = parser.parse_args()
+    logging.getLogger().setLevel(args.log_level.upper())
 
     spotfx_from_csv_and_investing_dot_com(
         datapath=os.path.expanduser(args.datapath),
