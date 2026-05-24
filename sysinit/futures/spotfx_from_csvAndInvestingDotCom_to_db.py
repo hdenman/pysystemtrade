@@ -31,6 +31,9 @@ INVESTING_DOT_COM_DATE_COLUMN = "Date"
 INVESTING_DOT_COM_PRICE_COLUMN = "Price"
 INVESTING_DOT_COM_DATE_FORMAT = "%m/%d/%Y"
 
+# Currency token aliases applied after code derivation: {from: to}
+_CURRENCY_ALIASES: dict = {"MXN": "MXP"}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,9 +84,20 @@ def _read_investingdotcom_file(filepath: str, invert: bool = False) -> fxPrices:
     return fxPrices(price_series.sort_index())
 
 
-def _discover_investingdotcom_codes(datapath: str) -> dict:
+def _apply_currency_aliases(code: str) -> str:
+    """Replace aliased currency tokens in a derived fx code (e.g. MXNUSD → MXPUSD)."""
+    for old, new in _CURRENCY_ALIASES.items():
+        code = code.replace(old, new)
+    return code
+
+
+def _discover_investingdotcom_codes(datapath: str) -> tuple:
     """
-    Scan *datapath* for *.csv files and return {fx_code: (filepath, invert)}.
+    Scan *datapath* for *.csv files and return ``(codes, warnings)``.
+
+    ``codes``    – {fx_code: (filepath, invert)}
+    ``warnings`` – list of strings for any currency aliases that fired,
+                   to be printed by the caller after the main loop.
 
     Only files whose name contains " Historical Data" are considered, so
     stray CSVs in the same directory are silently ignored.
@@ -92,16 +106,23 @@ def _discover_investingdotcom_codes(datapath: str) -> dict:
     ``USD_CNH Historical Data.csv``) where prices must be reciprocated before
     merging into the pysystemtrade USD-per-foreign convention.
     """
-    result = {}
+    result: dict = {}
+    alias_warnings: list = []
     for entry in os.scandir(datapath):
         if not entry.name.endswith(".csv"):
             continue
         stem = entry.name[:-4]  # strip ".csv"
         if "Historical Data" not in stem:
             continue
-        code = _investingdotcom_stem_to_code(stem)
+        raw_code = _investingdotcom_stem_to_code(stem)
+        code = _apply_currency_aliases(raw_code)
+        if code != raw_code:
+            alias_warnings.append(
+                f"{entry.name}: '{raw_code}' mapped to '{code}' "
+                f"(via _CURRENCY_ALIASES)"
+            )
         result[code] = (entry.path, _investingdotcom_stem_needs_invert(stem))
-    return result
+    return result, alias_warnings
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +146,7 @@ def spotfx_from_csv_and_investing_dot_com(
     ADD_TO_CSV : bool
         Overwrite the existing pysystemtrade CSV files with merged data.
     """
-    new_data_by_code = _discover_investingdotcom_codes(datapath)
+    new_data_by_code, alias_warnings = _discover_investingdotcom_codes(datapath)
     my_csv_fx_prices_data = csvFxPricesData()
     db_fx_prices_data = dataCurrency().db_fx_prices_data
 
@@ -151,8 +172,11 @@ def spotfx_from_csv_and_investing_dot_com(
             n_merged = len(merged)
 
             print(
-                f"{currency_code}: existing={n_existing}, "
-                f"file={n_new}, added={n_merged - n_existing}, total={n_merged}"
+                f"{currency_code}: "
+                f"existing={n_existing} ({existing.index[-1].strftime('%Y-%m-%d')}), "
+                f"file={n_new} ({new.index[-1].strftime('%Y-%m-%d')}), "
+                f"added={n_merged - n_existing}, "
+                f"total={n_merged} ({merged.index[-1].strftime('%Y-%m-%d')})"
             )
 
             if ADD_TO_CSV:
@@ -168,7 +192,10 @@ def spotfx_from_csv_and_investing_dot_com(
                 )
         else:
             # No new investing.com file — push existing CSV to DB unchanged
-            print(f"{currency_code}: existing={n_existing} rows, no new data")
+            print(
+                f"{currency_code}: existing={n_existing} "
+                f"({existing.index[-1].strftime('%Y-%m-%d')}), no new data"
+            )
 
             if ADD_TO_DB:
                 db_fx_prices_data.add_fx_prices(
@@ -177,6 +204,10 @@ def spotfx_from_csv_and_investing_dot_com(
                     ignore_duplication=True,
                 )
 
+    if alias_warnings:
+        print()
+        for warning in alias_warnings:
+            print(f"WARNING: {warning}")
 
 # ---------------------------------------------------------------------------
 # CLI entry point
