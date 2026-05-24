@@ -39,11 +39,18 @@ from sysdata.parquet.parquet_futures_per_contract_prices import (
     from_key_to_freq_and_contract,
 )
 from sysdata.parquet.parquet_multiple_prices import MULTIPLE_COLLECTION
+from sysdata.parquet.parquet_spotfx_prices import SPOTFX_COLLECTION
 
 _KB = 1024
 _TOTALS_LABEL = "TOTAL"
 _MULTIPLE_PRICE_COLUMNS = [
     "instrument",
+    "first_price",
+    "last_price",
+    "prices",
+]
+_FX_PRICE_COLUMNS = [
+    "currency",
     "first_price",
     "last_price",
     "prices",
@@ -480,7 +487,99 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Multiple prices unavailable: {exc}", file=sys.stderr)
         failures += 1
 
+    print()
+    try:
+        report_fx_prices_status(parquet_store=args.parquet_store)
+    except missingData as exc:
+        print(f"FX prices unavailable: {exc}", file=sys.stderr)
+        failures += 1
+
     return 1 if failures else 0
 
+
+def report_fx_prices_status(
+    parquet_store: str = arg_not_supplied,
+) -> pd.DataFrame:
+    """Print and return per-currency FX price stats from the parquet store.
+
+    Each row represents one currency pair. A TOTAL row is appended.
+    Row counts and min/max timestamps come from the parquet footer — no data read.
+
+    :param parquet_store: parquet root override (default: ``parquet_store`` config)
+    :return: DataFrame with columns ``currency, first_price, last_price, prices``,
+        plus an appended TOTAL row
+    :raises syscore.exceptions.missingData: if no parquet store is configured
+    """
+    root = _resolve_parquet_store(parquet_store)
+    fx_dir = Path(root) / SPOTFX_COLLECTION
+    print(f"FX prices — store={root}")
+
+    if not fx_dir.is_dir():
+        print(f"(missing {SPOTFX_COLLECTION}/ subdirectory)")
+        return _empty_fx_prices_table()
+
+    summaries = [
+        _fx_price_file_summary(path)
+        for path in sorted(fx_dir.glob("*.parquet"))
+    ]
+    table = _build_fx_prices_table(summaries)
+    _print_fx_prices_summary(table)
+    _print_table(table, empty_message="(no FX price files)")
+    return table
+
+
+def _fx_price_file_summary(path: Path) -> dict:
+    """Extract (currency, row count, min/max ts) from a parquet footer."""
+    currency = path.stem
+    try:
+        metadata = pq.read_metadata(str(path))
+    except (OSError, pa.ArrowInvalid):
+        return {
+            "currency": currency,
+            "rows": 0,
+            "min_ts": pd.NaT,
+            "max_ts": pd.NaT,
+        }
+    min_ts, max_ts = _index_range_from_metadata(metadata)
+    return {
+        "currency": currency,
+        "rows": metadata.num_rows,
+        "min_ts": min_ts,
+        "max_ts": max_ts,
+    }
+
+
+def _build_fx_prices_table(summaries: list[dict]) -> pd.DataFrame:
+    if not summaries:
+        return _empty_fx_prices_table()
+    files = pd.DataFrame(summaries)
+    table = (
+        files.rename(
+            columns={"min_ts": "first_price", "max_ts": "last_price", "rows": "prices"}
+        )[_FX_PRICE_COLUMNS]
+        .sort_values("prices", ascending=False, na_position="last")
+    )
+    totals = {
+        "currency": _TOTALS_LABEL,
+        "first_price": table["first_price"].min(),
+        "last_price": table["last_price"].max(),
+        "prices": int(table["prices"].sum()),
+    }
+    return pd.concat(
+        [table, pd.DataFrame([totals], columns=_FX_PRICE_COLUMNS)],
+        ignore_index=True,
+    )
+
+
+def _empty_fx_prices_table() -> pd.DataFrame:
+    return pd.DataFrame(columns=_FX_PRICE_COLUMNS)
+
+
+def _print_fx_prices_summary(table: pd.DataFrame) -> None:
+    body = table[table["currency"] != _TOTALS_LABEL]
+    print(
+        "currencies=%d, prices=%d"
+        % (len(body), int(body["prices"].sum()))
+    )
 if __name__ == "__main__":
     sys.exit(main())
