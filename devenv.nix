@@ -43,8 +43,11 @@ in
 
   # https://devenv.sh/basics/
   enterShell = ''
-    hello         # Run scripts directly
-    git --version # Use packages
+    hello
+    git --version
+    export PYSYS_UNIVERSE=''${PYSYS_UNIVERSE:-synthetic}
+    echo "Universe: $PYSYS_UNIVERSE"
+    export PS1="(pysystemtrade:$PYSYS_UNIVERSE) \u@\h:\w\$ "
   '';
 
   # https://devenv.sh/tasks/

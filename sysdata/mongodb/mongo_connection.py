@@ -5,6 +5,7 @@ import re
 
 from syscore.constants import arg_not_supplied
 from sysdata.config.production_config import get_production_config
+from syscore.universe import universe_subdir as _universe_subdir
 
 LIST_OF_MONGO_PARAMS = ["mongo_db", "mongo_host", "mongo_port"]
 
@@ -102,6 +103,8 @@ class mongoDb:
             mongo_host=mongo_host,
             mongo_port=mongo_port,
         )
+
+        database_name = f"{database_name}_{_universe_subdir()}"
 
         self.database_name = database_name
         self.host = host

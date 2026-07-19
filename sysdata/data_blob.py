@@ -337,13 +337,19 @@ class dataBlob(object):
 
     @property
     def parquet_root_directory(self) -> str:
+        import os
+        from syscore.universe import scoped_path as _scoped_path
         path = self._parquet_store_path
         if path is arg_not_supplied:
-            try:
-                path = self.config.get_element("parquet_store")
-            except:
-                raise Exception("Need to define parquet_store in config to use parquet")
-
+            if os.environ.get("PARQUET_DATA"):
+                path = _scoped_path("PARQUET_DATA")
+            else:
+                try:
+                    path = self.config.get_element("parquet_store")
+                except Exception:
+                    raise Exception(
+                        "Need to define parquet_store in config or set PARQUET_DATA env var to use parquet"
+                    )
         return path
 
     def _get_new_mongo_db(self) -> mongoDb:
