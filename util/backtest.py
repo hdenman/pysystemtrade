@@ -62,8 +62,17 @@ def run_backtest(
         inst: system.rawdata.get_daily_prices(inst).dropna()
         for inst in instruments
     }
+    # buffered = what's actually traded (drives P&L); notional = target (for chart)
     positions = {
+        inst: system.accounts.get_buffered_position(inst, roundpositions=True).dropna()
+        for inst in instruments
+    }
+    notional_positions = {
         inst: system.portfolio.get_notional_position(inst).dropna()
+        for inst in instruments
+    }
+    buffers = {
+        inst: system.accounts.get_buffers_for_position(inst)
         for inst in instruments
     }
 
@@ -113,19 +122,49 @@ def run_backtest(
             "pct": _fmt2(pct) if not _nan(pct) else None,
         })
 
-    # weekly holdings: one row per week-end, one column per instrument
-    # column value = position (contracts)
+    # weekly holdings: position, market value, cash, total
     holdings_dates = (
         positions[instruments[0]].resample("W").last().dropna().index
         if instruments else pd.DatetimeIndex([])
     )
-    holdings: dict[str, list] = {}
+
+    # pointsize and base-currency FX rate per instrument
+    base_ccy = system.config.get_element_or_default("base_currency", "USD")
+    pointsizes = {inst: system.data.get_value_of_block_price_move(inst) for inst in instruments}
+    weekly_fx = {
+        inst: system.data.get_fx_for_instrument(inst, base_ccy).resample("W").last()
+        for inst in instruments
+    }
+
+    holdings_pos:   dict[str, list] = {}
+    holdings_val:   dict[str, list] = {}
     for inst in instruments:
-        weekly_pos = positions[inst].resample("W").last().dropna()
-        holdings[inst] = [
-            _fmt4(weekly_pos.get(dt, float("nan")))
-            for dt in holdings_dates
-        ]
+        weekly_pos   = positions[inst].resample("W").last()
+        weekly_price = prices[inst].resample("W").last()
+        ps = pointsizes[inst]
+        pos_list, val_list = [], []
+        for dt in holdings_dates:
+            p = weekly_pos.get(dt, float("nan"))
+            pr = weekly_price.get(dt, float("nan"))
+            fx = weekly_fx[inst].get(dt, 1.0)
+            pos_list.append(_fmt4(p))
+            val_list.append(_fmt2(p * pr * ps * fx) if not (_nan(p) or _nan(pr)) else None)
+        holdings_pos[inst] = pos_list
+        holdings_val[inst] = val_list
+
+    # cash = total equity − Σ instrument values; total = equity at week-end
+    weekly_equity_w = weekly_equity.reindex(holdings_dates)
+    holdings_total, holdings_cash = [], []
+    for ri, dt in enumerate(holdings_dates):
+        tot = weekly_equity_w.get(dt, float("nan"))
+        if _nan(tot):
+            holdings_total.append(None)
+            holdings_cash.append(None)
+        else:
+            inst_sum = sum(holdings_val[inst][ri] or 0.0 for inst in instruments)
+            holdings_total.append(_fmt2(tot))
+            holdings_cash.append(_fmt2(tot - inst_sum))
+
     holdings_date_strs = [dt.strftime("%Y-%m-%d") for dt in holdings_dates]
 
     # --- assemble data blob ---
@@ -144,13 +183,19 @@ def run_backtest(
         },
         "instruments": instruments,
         "equity": _series_to_chartjs(equity),
-        "prices": {inst: _series_to_chartjs(prices[inst]) for inst in instruments},
-        "positions": {inst: _series_to_chartjs(positions[inst]) for inst in instruments},
+        "prices":    {inst: _series_to_chartjs(prices[inst])             for inst in instruments},
+        "positions": {inst: _series_to_chartjs(positions[inst])          for inst in instruments},
+        "notional":  {inst: _series_to_chartjs(notional_positions[inst]) for inst in instruments},
+        "buf_top":   {inst: _series_to_chartjs(buffers[inst]["top_pos"].dropna()) for inst in instruments},
+        "buf_bot":   {inst: _series_to_chartjs(buffers[inst]["bot_pos"].dropna()) for inst in instruments},
         "trades": all_trades,
         "weekly": weekly_rows,
         "holdings": {
-            "dates": holdings_date_strs,
-            "instruments": holdings,
+            "dates":  holdings_date_strs,
+            "pos":    holdings_pos,
+            "value":  holdings_val,
+            "cash":   holdings_cash,
+            "total":  holdings_total,
         },
     }
 
@@ -216,13 +261,13 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .cv      { font-size:1.4rem; font-weight:600; }
   .pos     { color:#16a34a; }
   .neg     { color:#dc2626; }
-  canvas   { max-height:380px; }
-  .tscroll { max-height:540px; overflow-y:auto; }
+  .chart   { width:100%; height:380px; }
+  .tscroll { max-height:560px; overflow-y:auto; }
   th       { position:sticky; top:0; background:#f1f5f9;
              z-index:1; white-space:nowrap; }
   td       { white-space:nowrap; }
-  .nav-tabs .nav-link { color:#475569; }
-  .nav-tabs .nav-link.active { font-weight:600; color:#0f172a; }
+  .nav-tabs .nav-link       { color:#475569; }
+  .nav-tabs .nav-link.active{ font-weight:600; color:#0f172a; }
 </style>
 </head>
 <body>
@@ -233,43 +278,35 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <div class="container-fluid px-4">
-
-  <!-- stat cards -->
   <div class="cards" id="stat-cards"></div>
-
-  <!-- tabs -->
   <ul class="nav nav-tabs mb-3" id="mainTabs" role="tablist"></ul>
   <div class="tab-content" id="mainContent"></div>
-
-</div><!-- /container -->
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist@2.32.0/plotly.min.js"></script>
 
 <script>
 const D = __DATA__;
 
-// ── header ───────────────────────────────────────────────────────────────
+// ── header ────────────────────────────────────────────────────────────────
 document.getElementById('h-name').textContent = D.meta.name;
 document.getElementById('h-sub').textContent =
   `Run ${D.meta.run_date} · ${D.meta.n_days} trading days · ${D.meta.start_date} → ${D.meta.end_date}`;
 
 // ── stat cards ────────────────────────────────────────────────────────────
 const retCls = D.meta.total_return_pct >= 0 ? 'pos' : 'neg';
-const cards = [
+[
   ['Starting capital',  fmt(D.meta.starting_capital, 0), ''],
   ['Final value',       fmt(D.meta.final_value, 0),      ''],
   ['Total return',      fmtPct(D.meta.total_return_pct), retCls],
-];
-const cardEl = document.getElementById('stat-cards');
-cards.forEach(([lbl, val, cls]) => {
-  cardEl.innerHTML +=
+].forEach(([lbl, val, cls]) => {
+  document.getElementById('stat-cards').insertAdjacentHTML('beforeend',
     `<div class="card p-3"><div class="cl">${lbl}</div>` +
-    `<div class="cv ${cls}">${val}</div></div>`;
+    `<div class="cv ${cls}">${val}</div></div>`);
 });
 
-// ── tabs ──────────────────────────────────────────────────────────────────
+// ── tab helpers ───────────────────────────────────────────────────────────
 const tabs  = document.getElementById('mainTabs');
 const panes = document.getElementById('mainContent');
 
@@ -289,79 +326,104 @@ function addTab(id, label, contentHtml, active) {
      </div>`);
 }
 
-// ── chart helpers ─────────────────────────────────────────────────────────
-const CHART_DEFAULTS = {
-  responsive: true,
-  animation: false,
-  plugins: { legend: { display: false } },
-  elements: { point: { radius: 0 } },
+// Resize Plotly charts when a tab becomes visible (they render at 0×0 if hidden).
+tabs.addEventListener('shown.bs.tab', e => {
+  const pane = document.querySelector(e.target.getAttribute('data-bs-target'));
+  if (pane) pane.querySelectorAll('.chart').forEach(el => Plotly.Plots.resize(el));
+});
+
+// ── Plotly helpers ────────────────────────────────────────────────────────
+const PLOTLY_CFG = { responsive: true, scrollZoom: true, displayModeBar: true,
+  modeBarButtonsToRemove: ['select2d','lasso2d','resetScale2d'] };
+
+const PLOTLY_BASE_LAYOUT = {
+  margin:    { t:20, r:20, b:50, l:90 },
+  hovermode: 'x unified',
+  plot_bgcolor:  '#fff',
+  paper_bgcolor: '#f8fafc',
+  xaxis: { type:'date', showgrid:true, gridcolor:'#e2e8f0' },
+  yaxis: { showgrid:true, gridcolor:'#e2e8f0' },
 };
 
-function timeAxis(unit) {
-  return { type: 'time', time: { unit }, ticks: { maxTicksLimit: 12 } };
+function pts2xy(pts) {
+  const x = [], y = [];
+  pts.forEach(p => { if (p.y !== null) { x.push(p.x); y.push(p.y); } });
+  return { x, y };
 }
 
-function currencyAxis(label) {
-  return {
-    title: { display: !!label, text: label || '' },
-    ticks: { callback: v => fmt(v, 0) },
-  };
-}
-
-function makeLineChart(canvasId, datasets, yAxes, xUnit) {
-  const ctx = document.getElementById(canvasId).getContext('2d');
-  new Chart(ctx, {
-    type: 'line',
-    data: { datasets },
-    options: {
-      ...CHART_DEFAULTS,
-      scales: { x: timeAxis(xUnit || 'month'), ...yAxes },
-    },
-  });
+function plotLine(divId, traces, layout) {
+  Plotly.newPlot(divId, traces,
+    Object.assign({}, PLOTLY_BASE_LAYOUT, layout),
+    PLOTLY_CFG);
 }
 
 // ── 1. Portfolio tab ──────────────────────────────────────────────────────
 addTab('portfolio', 'Portfolio',
-  `<div class="p-3"><canvas id="chart-portfolio"></canvas></div>`,
+  `<div class="p-3"><div id="chart-portfolio" class="chart"></div></div>`,
   true);
 
-makeLineChart('chart-portfolio',
-  [{ label: 'Portfolio value', data: D.equity,
-     borderColor: '#2563eb', borderWidth: 1.5, fill: false }],
-  { y: currencyAxis('Value') });
+{
+  const {x, y} = pts2xy(D.equity);
+  plotLine('chart-portfolio', [{
+    x, y, type:'scatter', mode:'lines', name:'Portfolio value',
+    line: { color:'#2563eb', width:1.5 },
+    hovertemplate:'%{x}<br><b>%{y:,.0f}</b><extra></extra>',
+  }], {
+    yaxis: { tickformat:',.0f', title:{ text:'Value' }, showgrid:true, gridcolor:'#e2e8f0' },
+  });
+}
 
 // ── 2. Per-instrument tabs ────────────────────────────────────────────────
 D.instruments.forEach(inst => {
   addTab(`inst-${inst}`, inst,
     `<div class="p-3">
-       <canvas id="chart-price-${inst}"></canvas>
-       <div class="mt-3"><canvas id="chart-pos-${inst}"></canvas></div>
+       <div id="chart-price-${inst}" class="chart"></div>
+       <div id="chart-pos-${inst}"   class="chart mt-3"></div>
      </div>`,
     false);
 
-  makeLineChart(`chart-price-${inst}`,
-    [{ label: 'Price (back-adj)', data: D.prices[inst],
-       borderColor: '#7c3aed', borderWidth: 1.2, fill: false }],
-    { y: { title: { display: true, text: 'Price' } } });
+  const {x:px, y:py} = pts2xy(D.prices[inst]);
+  plotLine(`chart-price-${inst}`, [{
+    x:px, y:py, type:'scatter', mode:'lines', name:'Price',
+    line: { color:'#7c3aed', width:1.2 },
+    hovertemplate:'%{x}<br><b>%{y:.4f}</b><extra></extra>',
+  }], { yaxis: { title:{ text:'Price (back-adj)' }, showgrid:true, gridcolor:'#e2e8f0' } });
 
-  makeLineChart(`chart-pos-${inst}`,
-    [{ label: 'Notional position', data: D.positions[inst],
-       borderColor: '#0891b2', borderWidth: 1.2, fill: true,
-       backgroundColor: 'rgba(8,145,178,0.08)' }],
-    { y: { title: { display: true, text: 'Contracts' } } });
+  const {x:qx,  y:qy}  = pts2xy(D.positions[inst]);
+  const {x:nx,  y:ny}  = pts2xy(D.notional[inst]);
+  const {x:tx,  y:ty}  = pts2xy(D.buf_top[inst]);
+  const {x:bx,  y:by}  = pts2xy(D.buf_bot[inst]);
+  plotLine(`chart-pos-${inst}`, [
+    { x:tx, y:ty, type:'scatter', mode:'lines', name:'Buffer top',
+      line:{ color:'#ef4444', width:1, dash:'dash' },
+      hovertemplate:'%{x}<br>buf_top <b>%{y:.2f}</b><extra></extra>' },
+    { x:bx, y:by, type:'scatter', mode:'lines', name:'Buffer bot',
+      fill:'tonexty', fillcolor:'rgba(239,68,68,0.06)',
+      line:{ color:'#ef4444', width:1, dash:'dash' },
+      hovertemplate:'%{x}<br>buf_bot <b>%{y:.2f}</b><extra></extra>' },
+    { x:nx, y:ny, type:'scatter', mode:'lines', name:'Target (notional)',
+      line:{ color:'#f59e0b', width:1.5, dash:'dot' },
+      hovertemplate:'%{x}<br>target <b>%{y:.2f}</b><extra></extra>' },
+    { x:qx, y:qy, type:'scatter', mode:'lines', name:'Actual (buffered)',
+      line:{ color:'#0891b2', width:2 },
+      hovertemplate:'%{x}<br>actual <b>%{y:.2f}</b><extra></extra>' },
+  ], { yaxis: { title:{ text:'Contracts' }, showgrid:true, gridcolor:'#e2e8f0' },
+       showlegend: true,
+       shapes:[{ type:'line', x0:qx[0], x1:qx[qx.length-1], y0:0, y1:0,
+                 line:{ color:'#94a3b8', width:1, dash:'dot' } }] });
 });
 
 // ── 3. Weekly values tab ─────────────────────────────────────────────────
 (function() {
   let rows = '';
   D.weekly.forEach(r => {
-    const pnlCls = r.pnl === null ? '' : (r.pnl >= 0 ? 'pos' : 'neg');
+    const cls = r.pnl === null ? '' : (r.pnl >= 0 ? 'pos' : 'neg');
     rows +=
       `<tr>
          <td>${r.date}</td>
-         <td class="text-end">${r.value === null ? '—' : fmt(r.value, 2)}</td>
-         <td class="text-end ${pnlCls}">${r.pnl === null ? '—' : fmtSigned(r.pnl, 2)}</td>
-         <td class="text-end ${pnlCls}">${r.pct  === null ? '—' : fmtPct(r.pct)}</td>
+         <td class="text-end">${r.value === null ? '—' : fmt(r.value,2)}</td>
+         <td class="text-end ${cls}">${r.pnl === null ? '—' : fmtSigned(r.pnl,2)}</td>
+         <td class="text-end ${cls}">${r.pct  === null ? '—' : fmtPct(r.pct)}</td>
        </tr>`;
   });
   addTab('weekly', 'Weekly values',
@@ -369,13 +431,11 @@ D.instruments.forEach(inst => {
        <table class="table table-sm table-hover mb-0">
          <thead><tr>
            <th>Week ending</th><th class="text-end">Portfolio value</th>
-           <th class="text-end">Weekly P&amp;L</th>
-           <th class="text-end">Weekly return</th>
+           <th class="text-end">Weekly P&amp;L</th><th class="text-end">Weekly return</th>
          </tr></thead>
          <tbody>${rows}</tbody>
        </table>
-     </div>`,
-    false);
+     </div>`, false);
 })();
 
 // ── 4. Trades tab ─────────────────────────────────────────────────────────
@@ -383,19 +443,18 @@ D.instruments.forEach(inst => {
   let rows = '';
   D.trades.forEach(t => {
     const cls = t.direction === 'Buy' ? 'pos' : 'neg';
-    const noteBadge = t.note === 'open'
-      ? '<span class="badge bg-secondary ms-1" style="font-size:.65rem">open</span>'
-      : '';
+    const badge = t.note === 'open'
+      ? '<span class="badge bg-secondary ms-1" style="font-size:.65rem">open</span>' : '';
     rows +=
       `<tr>
-         <td>${t.date}</td>
-         <td>${t.instrument}</td>
-         <td class="${cls}">${t.direction}${noteBadge}</td>
+         <td>${t.date}</td><td>${t.instrument}</td>
+         <td class="${cls}">${t.direction}${badge}</td>
          <td class="text-end">${t.qty.toLocaleString(undefined,
              {minimumFractionDigits:2, maximumFractionDigits:4})}</td>
        </tr>`;
   });
-  addTab('trades', `Trades <span class="badge bg-secondary ms-1">${D.trades.length}</span>`,
+  addTab('trades',
+    `Trades <span class="badge bg-secondary ms-1">${D.trades.length}</span>`,
     `<div class="p-3 tscroll">
        <table class="table table-sm table-hover mb-0">
          <thead><tr>
@@ -404,49 +463,65 @@ D.instruments.forEach(inst => {
          </tr></thead>
          <tbody>${rows}</tbody>
        </table>
-     </div>`,
-    false);
+     </div>`, false);
 })();
 
 // ── 5. Holdings tab ───────────────────────────────────────────────────────
 (function() {
   const h = D.holdings;
-  const instCols = h.instruments ? Object.keys(h.instruments) : [];
-  let hdr = '<th>Week ending</th>' +
-    instCols.map(i => `<th class="text-end">${i}</th>`).join('');
+  const insts = D.instruments;
+
+  // Two-level header: instrument name spans pos+value cols, then Cash, Total
+  const hdr1 = '<th rowspan="2">Week ending</th>' +
+    insts.map(i => `<th colspan="2" class="text-center border-start">${i}</th>`).join('') +
+    '<th rowspan="2" class="text-end border-start">Cash</th>' +
+    '<th rowspan="2" class="text-end border-start fw-bold">Total</th>';
+  const hdr2 = insts.map(() =>
+    '<th class="text-end border-start">Position</th><th class="text-end">Value</th>'
+  ).join('');
+
   let rows = '';
   h.dates.forEach((dt, ri) => {
-    const cells = instCols.map(inst => {
-      const v = h.instruments[inst][ri];
-      return `<td class="text-end">${v === null ? '—' :
-        v.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>`;
+    const instCells = insts.map(inst => {
+      const pos = h.pos[inst][ri];
+      const val = h.value[inst][ri];
+      return `<td class="text-end border-start">${pos === null ? '—' :
+          pos.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td>` +
+        `<td class="text-end">${val === null ? '—' : fmt(val, 2)}</td>`;
     }).join('');
-    rows += `<tr><td>${dt}</td>${cells}</tr>`;
+    const cash  = h.cash[ri];
+    const total = h.total[ri];
+    rows += `<tr>
+      <td>${dt}</td>${instCells}
+      <td class="text-end border-start">${cash  === null ? '—' : fmt(cash,  2)}</td>
+      <td class="text-end border-start fw-bold">${total === null ? '—' : fmt(total, 2)}</td>
+    </tr>`;
   });
+
   addTab('holdings', 'Holdings',
     `<div class="p-3 tscroll">
        <table class="table table-sm table-hover mb-0">
-         <thead><tr>${hdr}</tr></thead>
+         <thead>
+           <tr>${hdr1}</tr>
+           <tr>${hdr2}</tr>
+         </thead>
          <tbody>${rows}</tbody>
        </table>
-     </div>`,
-    false);
+     </div>`, false);
 })();
 
 // ── utilities ─────────────────────────────────────────────────────────────
 function fmt(v, dp) {
-  if (v === null || v === undefined) return '—';
+  if (v == null) return '—';
   return Number(v).toLocaleString(undefined,
-    {minimumFractionDigits: dp, maximumFractionDigits: dp});
+    {minimumFractionDigits:dp, maximumFractionDigits:dp});
 }
 function fmtSigned(v, dp) {
-  const s = fmt(Math.abs(v), dp);
-  return (v >= 0 ? '+' : '−') + s;
+  return (v >= 0 ? '+' : '−') + fmt(Math.abs(v), dp);
 }
 function fmtPct(v) {
-  if (v === null || v === undefined) return '—';
-  const s = Math.abs(v).toFixed(2) + '%';
-  return (v >= 0 ? '+' : '−') + s;
+  if (v == null) return '—';
+  return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%';
 }
 </script>
 </body>
