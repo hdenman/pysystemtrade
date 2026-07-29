@@ -1,0 +1,2 @@
+Instrument,Description,Pointsize,Currency,AssetClass,PerBlock,Percentage,PerTrade,Region
+SYN_FLAT,"Synthetic flat-price spot instrument (no roll, no carry)",1.0,USD,Synthetic,0.0,0.0,0.0,SYNTHETIC
