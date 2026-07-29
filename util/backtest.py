@@ -75,6 +75,22 @@ def run_backtest(
         inst: system.accounts.get_buffers_for_position(inst)
         for inst in instruments
     }
+    rule_names = list(system.config.trading_rules.keys())
+    combined_forecasts = {
+        inst: system.combForecast.get_combined_forecast(inst).dropna()
+        for inst in instruments
+    }
+    volatility = {
+        inst: system.rawdata.daily_returns_volatility(inst).dropna()
+        for inst in instruments
+    }
+    rule_forecasts = {
+        inst: {
+            rule: system.forecastScaleCap.get_capped_forecast(inst, rule).dropna()
+            for rule in rule_names
+        }
+        for inst in instruments
+    }
 
     # trades = opening position + daily changes (non-zero)
     all_trades: list[dict] = []
@@ -180,6 +196,7 @@ def run_backtest(
             "total_return_pct": round(
                 (float(equity.iloc[-1]) / starting_capital - 1) * 100, 2
             ),
+            "forecast_cap": float(system.config.get_element_or_default("forecast_cap", 20.0)),
         },
         "instruments": instruments,
         "equity": _series_to_chartjs(equity),
@@ -187,8 +204,14 @@ def run_backtest(
         "positions": {inst: _series_to_chartjs(positions[inst])          for inst in instruments},
         "notional":  {inst: _series_to_chartjs(notional_positions[inst]) for inst in instruments},
         "buf_top":   {inst: _series_to_chartjs(buffers[inst]["top_pos"].dropna()) for inst in instruments},
-        "buf_bot":   {inst: _series_to_chartjs(buffers[inst]["bot_pos"].dropna()) for inst in instruments},
-        "trades": all_trades,
+        "buf_bot":        {inst: _series_to_chartjs(buffers[inst]["bot_pos"].dropna()) for inst in instruments},
+        "rule_names":     rule_names,
+        "combined_fc":    {inst: _series_to_chartjs(combined_forecasts[inst]) for inst in instruments},
+        "volatility":     {inst: _series_to_chartjs(volatility[inst]) for inst in instruments},
+        "rule_forecasts": {
+            inst: {rule: _series_to_chartjs(rule_forecasts[inst][rule]) for rule in rule_names}
+            for inst in instruments
+        },
         "weekly": weekly_rows,
         "holdings": {
             "dates":  holdings_date_strs,
@@ -262,7 +285,14 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pos     { color:#16a34a; }
   .neg     { color:#dc2626; }
   .chart   { width:100%; height:380px; }
+  .chart-sm{ width:100%; height:220px; }
   .tscroll { max-height:560px; overflow-y:auto; }
+  #sticky-bar {
+    position: sticky; top: 0; z-index: 200;
+    background: #f8fafc;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.07);
+    padding-bottom: 0;
+  }
   th       { position:sticky; top:0; background:#f1f5f9;
              z-index:1; white-space:nowrap; }
   td       { white-space:nowrap; }
@@ -272,14 +302,17 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
 
-<div class="header">
-  <h5 class="mb-0">Backtest — <strong id="h-name"></strong></h5>
-  <small class="text-muted" id="h-sub"></small>
+<div id="sticky-bar">
+  <div class="header">
+    <h5 class="mb-0">Backtest — <strong id="h-name"></strong></h5>
+    <small class="text-muted" id="h-sub"></small>
+  </div>
+  <div class="container-fluid px-4 pb-0">
+    <div class="cards" id="stat-cards"></div>
+    <ul class="nav nav-tabs" id="mainTabs" role="tablist"></ul>
+  </div>
 </div>
-
-<div class="container-fluid px-4">
-  <div class="cards" id="stat-cards"></div>
-  <ul class="nav nav-tabs mb-3" id="mainTabs" role="tablist"></ul>
+<div class="container-fluid px-4 pt-3">
   <div class="tab-content" id="mainContent"></div>
 </div>
 
@@ -329,7 +362,7 @@ function addTab(id, label, contentHtml, active) {
 // Resize Plotly charts when a tab becomes visible (they render at 0×0 if hidden).
 tabs.addEventListener('shown.bs.tab', e => {
   const pane = document.querySelector(e.target.getAttribute('data-bs-target'));
-  if (pane) pane.querySelectorAll('.chart').forEach(el => Plotly.Plots.resize(el));
+  if (pane) pane.querySelectorAll('.chart, .chart-sm').forEach(el => Plotly.Plots.resize(el));
 });
 
 // ── Plotly helpers ────────────────────────────────────────────────────────
@@ -375,13 +408,30 @@ addTab('portfolio', 'Portfolio',
 
 // ── 2. Per-instrument tabs ────────────────────────────────────────────────
 D.instruments.forEach(inst => {
+  const cap = D.meta.forecast_cap;
+
+  // Build rule-forecast grid HTML
+  const ruleDivs = D.rule_names.map(rule =>
+    `<div class="col-md-6 col-xl-4">
+       <p class="small text-muted mb-1 mt-2">${rule}</p>
+       <div id="chart-rule-${inst}-${rule}" class="chart-sm"></div>
+     </div>`
+  ).join('');
+
   addTab(`inst-${inst}`, inst,
     `<div class="p-3">
        <div id="chart-price-${inst}" class="chart"></div>
        <div id="chart-pos-${inst}"   class="chart mt-3"></div>
+       <h6 class="mt-4 mb-0 fw-semibold text-secondary">Combined forecast</h6>
+       <div id="chart-fc-${inst}"  class="chart-sm"></div>
+       <h6 class="mt-3 mb-0 fw-semibold text-secondary">Daily price volatility</h6>
+       <div id="chart-vol-${inst}" class="chart-sm"></div>
+       <h6 class="mt-3 mb-1 fw-semibold text-secondary">Rule forecasts</h6>
+       <div class="row g-0">${ruleDivs}</div>
      </div>`,
     false);
 
+  // ── price chart ──
   const {x:px, y:py} = pts2xy(D.prices[inst]);
   plotLine(`chart-price-${inst}`, [{
     x:px, y:py, type:'scatter', mode:'lines', name:'Price',
@@ -389,10 +439,11 @@ D.instruments.forEach(inst => {
     hovertemplate:'%{x}<br><b>%{y:.4f}</b><extra></extra>',
   }], { yaxis: { title:{ text:'Price (back-adj)' }, showgrid:true, gridcolor:'#e2e8f0' } });
 
-  const {x:qx,  y:qy}  = pts2xy(D.positions[inst]);
-  const {x:nx,  y:ny}  = pts2xy(D.notional[inst]);
-  const {x:tx,  y:ty}  = pts2xy(D.buf_top[inst]);
-  const {x:bx,  y:by}  = pts2xy(D.buf_bot[inst]);
+  // ── position chart ──
+  const {x:qx, y:qy} = pts2xy(D.positions[inst]);
+  const {x:nx, y:ny} = pts2xy(D.notional[inst]);
+  const {x:tx, y:ty} = pts2xy(D.buf_top[inst]);
+  const {x:bx, y:by} = pts2xy(D.buf_bot[inst]);
   plotLine(`chart-pos-${inst}`, [
     { x:tx, y:ty, type:'scatter', mode:'lines', name:'Buffer top',
       line:{ color:'#ef4444', width:1, dash:'dash' },
@@ -411,6 +462,44 @@ D.instruments.forEach(inst => {
        showlegend: true,
        shapes:[{ type:'line', x0:qx[0], x1:qx[qx.length-1], y0:0, y1:0,
                  line:{ color:'#94a3b8', width:1, dash:'dot' } }] });
+
+  // ── combined forecast ──
+  const fcShapes = [
+    { type:'line', x0:px[0], x1:px[px.length-1], y0: cap, y1: cap,
+      line:{ color:'#ef4444', width:1, dash:'dash' } },
+    { type:'line', x0:px[0], x1:px[px.length-1], y0:-cap, y1:-cap,
+      line:{ color:'#ef4444', width:1, dash:'dash' } },
+    { type:'line', x0:px[0], x1:px[px.length-1], y0:0, y1:0,
+      line:{ color:'#94a3b8', width:1, dash:'dot' } },
+  ];
+  const {x:fcx, y:fcy} = pts2xy(D.combined_fc[inst]);
+  plotLine(`chart-fc-${inst}`, [{
+    x:fcx, y:fcy, type:'scatter', mode:'lines', name:'Combined forecast',
+    line:{ color:'#16a34a', width:1.5 },
+    hovertemplate:'%{x}<br><b>%{y:.2f}</b><extra></extra>',
+  }], { yaxis:{ title:{ text:'Forecast' }, showgrid:true, gridcolor:'#e2e8f0' },
+        shapes: fcShapes });
+
+  // ── volatility ──
+  const {x:vx, y:vy} = pts2xy(D.volatility[inst]);
+  plotLine(`chart-vol-${inst}`, [{
+    x:vx, y:vy, type:'scatter', mode:'lines', name:'Daily vol',
+    fill:'tozeroy', fillcolor:'rgba(100,116,139,0.12)',
+    line:{ color:'#64748b', width:1.2 },
+    hovertemplate:'%{x}<br><b>%{y:.4f}</b><extra></extra>',
+  }], { yaxis:{ title:{ text:'Price vol' }, showgrid:true, gridcolor:'#e2e8f0' } });
+
+  // ── per-rule forecasts ──
+  D.rule_names.forEach(rule => {
+    const {x:rx, y:ry} = pts2xy(D.rule_forecasts[inst][rule]);
+    plotLine(`chart-rule-${inst}-${rule}`, [{
+      x:rx, y:ry, type:'scatter', mode:'lines', name:rule,
+      line:{ color:'#2563eb', width:1 },
+      hovertemplate:'%{x}<br><b>%{y:.2f}</b><extra></extra>',
+    }], { yaxis:{ showgrid:true, gridcolor:'#e2e8f0' },
+          shapes: fcShapes,
+          margin:{ t:10, r:10, b:40, l:60 } });
+  });
 });
 
 // ── 3. Weekly values tab ─────────────────────────────────────────────────
