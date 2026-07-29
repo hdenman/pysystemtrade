@@ -6,7 +6,7 @@ Idempotent setup for the SYN_FLAT synthetic instrument.
 What this creates
 -----------------
 Parquet  $PARQUET_DATA/synthetic/futures_adjusted_prices/SYN_FLAT.parquet
-           Constant price 100.0, business-day frequency, 2020-01-01 → today
+           Price 100.0 + Gaussian noise (σ=5), business-day frequency, 2020-01-01 → today
 
 CSV      systems/hdenman/synthetic/001_flat/instrumentconfig.csv
            Pointsize=1, Currency=USD, AssetClass=Synthetic
@@ -29,6 +29,7 @@ import os
 # dynamically but scoped_path() is called at write time.
 os.environ["PYSYS_UNIVERSE"] = "synthetic"
 
+import numpy as np
 import pandas as pd
 from pathlib import Path
 
@@ -43,6 +44,8 @@ from sysobjects.adjusted_prices import futuresAdjustedPrices
 
 INSTRUMENT_CODE = "SYN_FLAT"
 PRICE = 100.0
+NOISE_STD = 5.0
+RANDOM_SEED = 42          # reproducible runs
 START_DATE = pd.Timestamp("2020-01-01")
 
 HERE = Path(__file__).resolve().parent
@@ -60,7 +63,9 @@ def _price_store() -> parquetFuturesAdjustedPricesData:
 def _build_prices() -> futuresAdjustedPrices:
     end = pd.Timestamp.today().normalize()
     index = pd.bdate_range(start=START_DATE, end=end)
-    series = pd.Series(PRICE, index=index, dtype=float)
+    rng = np.random.default_rng(RANDOM_SEED)
+    noise = rng.normal(loc=0.0, scale=NOISE_STD, size=len(index))
+    series = pd.Series(PRICE + noise, index=index, dtype=float)
     return futuresAdjustedPrices(series)
 
 
