@@ -7,6 +7,12 @@ Six-variant EWMAC system applied to SYN_FLAT.
     system = flat_system()
     system.combForecast.get_combined_forecast("SYN_FLAT")
     system.positionSize.get_notional_position("SYN_FLAT")
+
+or
+
+    python systems/hdenman/synthetic/001_flat/setup.py
+    python systems/hdenman/synthetic/001_flat/system.py
+
 """
 
 import os
@@ -68,11 +74,14 @@ def flat_system(
 
 
 if __name__ == "__main__":
-    system = flat_system()
-    print(system)
-    print("instruments :", system.get_instrument_list())
-    print()
+    import subprocess, sys
+    from pathlib import Path
+    # system.py lives 5 dirs deep; climb to project root so 'util' is importable
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-    for rule in system.config.trading_rules:
-        fc = system.forecastScaleCap.get_capped_forecast("SYN_FLAT", rule)
-        print(f"  {rule:15s}  head={fc.dropna().head(1).values}  tail={fc.dropna().tail(1).values}")
+    from util.backtest import run_backtest
+
+    system = flat_system()
+    path = run_backtest(system, name="001_flat", starting_capital=1_000_000)
+    print(f"Report: {path}")
+    subprocess.run(["open", str(path)])
