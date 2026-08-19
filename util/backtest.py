@@ -50,7 +50,10 @@ def run_backtest(
         starting_capital = config_capital
 
     # --- portfolio equity curve ---
-    portfolio_curve = system.accounts.portfolio()
+    # portfolio_with_multiplier() respects the capital_multiplier config
+    # (fixed_capital / full_compounding / half_compounding).
+    # With fixed_capital (the default) this is identical to portfolio().
+    portfolio_curve = system.accounts.portfolio_with_multiplier()
     daily_pnl = pd.Series(portfolio_curve.value_terms).dropna()
     if config_capital != starting_capital:
         daily_pnl = daily_pnl * (starting_capital / config_capital)
@@ -92,33 +95,57 @@ def run_backtest(
         for inst in instruments
     }
 
+    # pointsize and base-ccy FX per instrument (needed for trade valuation and holdings)
+    base_ccy = system.config.get_element_or_default("base_currency", "USD")
+    pointsizes = {inst: system.data.get_value_of_block_price_move(inst) for inst in instruments}
+    weekly_fx  = {
+        inst: system.data.get_fx_for_instrument(inst, base_ccy).resample("W").last()
+        for inst in instruments
+    }
+
     # trades = opening position + daily changes (non-zero)
     all_trades: list[dict] = []
     for inst in instruments:
-        pos = positions[inst]
+        pos    = positions[inst]
+        px     = prices[inst]
+        ps     = pointsizes[inst]
         if len(pos) == 0:
             continue
-        # opening position (the first non-NaN value has no predecessor in diff)
+
+        def _trade(decision_dt, signed_qty, note=""):
+            # delayfill=True: decision on T, fill executes at T+1
+            fill_dt      = decision_dt + pd.offsets.BDay(1)
+            fill_p       = float(px.get(fill_dt,      float("nan")))
+            decision_p   = float(px.get(decision_dt,  float("nan")))
+            lag_days     = (fill_dt - decision_dt).days
+            slippage     = round(fill_p - decision_p, 4) if not (_nan(fill_p) or _nan(decision_p)) else None
+            notional     = round(signed_qty * fill_p * ps, 2) if not _nan(fill_p) else None
+            return {
+                "date":          fill_dt.strftime("%Y-%m-%d"),
+                "instrument":    inst,
+                "direction":     "Buy" if signed_qty > 0 else "Sell",
+                "qty":           round(abs(signed_qty), 4),
+                "decision_date": decision_dt.strftime("%Y-%m-%d"),
+                "decision_price":round(decision_p, 4) if not _nan(decision_p) else None,
+                "lag":           lag_days,
+                "price":         round(fill_p, 4) if not _nan(fill_p) else None,
+                "slippage":      slippage,
+                "cost":          0.0,
+                "total":         notional,
+                "note":          note,
+            }
+
+        # opening position
         opening = pos.iloc[0]
         if opening != 0:
-            all_trades.append({
-                "date": pos.index[0].strftime("%Y-%m-%d"),
-                "instrument": inst,
-                "direction": "Buy" if opening > 0 else "Sell",
-                "qty": round(abs(opening), 4),
-                "note": "open",
-            })
+            all_trades.append(_trade(pos.index[0], opening, note="open"))
+
         # subsequent daily changes
         diffs = pos.diff().dropna()
         diffs = diffs[diffs != 0]
         for dt, qty in diffs.items():
-            all_trades.append({
-                "date": dt.strftime("%Y-%m-%d"),
-                "instrument": inst,
-                "direction": "Buy" if qty > 0 else "Sell",
-                "qty": round(abs(qty), 4),
-                "note": "",
-            })
+            all_trades.append(_trade(dt, qty))
+
     all_trades.sort(key=lambda r: r["date"], reverse=False)
 
     # weekly equity summary
@@ -144,13 +171,6 @@ def run_backtest(
         if instruments else pd.DatetimeIndex([])
     )
 
-    # pointsize and base-currency FX rate per instrument
-    base_ccy = system.config.get_element_or_default("base_currency", "USD")
-    pointsizes = {inst: system.data.get_value_of_block_price_move(inst) for inst in instruments}
-    weekly_fx = {
-        inst: system.data.get_fx_for_instrument(inst, base_ccy).resample("W").last()
-        for inst in instruments
-    }
 
     holdings_pos:   dict[str, list] = {}
     holdings_val:   dict[str, list] = {}
@@ -196,6 +216,10 @@ def run_backtest(
             "total_return_pct": round(
                 (float(equity.iloc[-1]) / starting_capital - 1) * 100, 2
             ),
+            "ann_return_pct": _ann_return_pct(
+                float(equity.iloc[-1]), starting_capital,
+                (equity.index[-1] - equity.index[0]).days
+            ),
             "forecast_cap": float(system.config.get_element_or_default("forecast_cap", 20.0)),
         },
         "instruments": instruments,
@@ -212,6 +236,7 @@ def run_backtest(
             inst: {rule: _series_to_chartjs(rule_forecasts[inst][rule]) for rule in rule_names}
             for inst in instruments
         },
+        "trades":    all_trades,
         "weekly": weekly_rows,
         "holdings": {
             "dates":  holdings_date_strs,
@@ -240,6 +265,13 @@ def _nan(v) -> bool:
         return math.isnan(float(v))
     except (TypeError, ValueError):
         return True
+
+def _ann_return_pct(final_value: float, starting_capital: float, calendar_days: int) -> float | None:
+    """CAGR as a percentage. Returns None when undefined (zero-day window or negative final value)."""
+    if calendar_days <= 0 or final_value <= 0:
+        return None
+    ratio = final_value / starting_capital
+    return round((ratio ** (365.25 / calendar_days) - 1) * 100, 2)
 
 
 def _fmt2(v) -> float:
@@ -329,10 +361,13 @@ document.getElementById('h-sub').textContent =
 
 // ── stat cards ────────────────────────────────────────────────────────────
 const retCls = D.meta.total_return_pct >= 0 ? 'pos' : 'neg';
+const annVal = D.meta.ann_return_pct;
+const annCls = annVal == null ? '' : (annVal >= 0 ? 'pos' : 'neg');
 [
-  ['Starting capital',  fmt(D.meta.starting_capital, 0), ''],
-  ['Final value',       fmt(D.meta.final_value, 0),      ''],
-  ['Total return',      fmtPct(D.meta.total_return_pct), retCls],
+  ['Starting capital',    fmt(D.meta.starting_capital, 0),          ''],
+  ['Final value',         fmt(D.meta.final_value, 0),               ''],
+  ['Total return',        fmtPct(D.meta.total_return_pct),          retCls],
+  ['Annualised return',   annVal == null ? '—' : fmtPct(annVal),    annCls],
 ].forEach(([lbl, val, cls]) => {
   document.getElementById('stat-cards').insertAdjacentHTML('beforeend',
     `<div class="card p-3"><div class="cl">${lbl}</div>` +
@@ -531,25 +566,54 @@ D.instruments.forEach(inst => {
 (function() {
   let rows = '';
   D.trades.forEach(t => {
-    const cls = t.direction === 'Buy' ? 'pos' : 'neg';
-    const badge = t.note === 'open'
+    const dirCls   = t.direction === 'Buy' ? 'pos' : 'neg';
+    const badge    = t.note === 'open'
       ? '<span class="badge bg-secondary ms-1" style="font-size:.65rem">open</span>' : '';
+    const totCls   = (t.total ?? 0) >= 0 ? 'pos' : 'neg';
+    // slippage: negative = price moved in your favour (bought cheaper / sold dearer overnight)
+    const slipCls  = t.slippage == null ? '' : (t.slippage < 0 ? 'pos' : t.slippage > 0 ? 'neg' : '');
+    const slipCost = t.slippage != null ? t.qty * t.slippage : null;
+    const scCls    = slipCost == null ? '' : (slipCost < 0 ? 'pos' : slipCost > 0 ? 'neg' : '');
     rows +=
       `<tr>
-         <td>${t.date}</td><td>${t.instrument}</td>
-         <td class="${cls}">${t.direction}${badge}</td>
+         <td>${t.decision_date}</td>
+         <td>${t.instrument}</td>
+         <td class="${dirCls}">${t.direction}${badge}</td>
          <td class="text-end">${t.qty.toLocaleString(undefined,
              {minimumFractionDigits:2, maximumFractionDigits:4})}</td>
+         <td class="text-end border-end">${t.decision_price == null ? '—' : fmt(t.decision_price, 4)}</td>
+         <td>${t.date}</td>
+         <td class="text-end">${t.lag}d</td>
+         <td class="text-end">${t.price == null ? '—' : fmt(t.price, 4)}</td>
+         <td class="text-end ${slipCls}">${t.slippage == null ? '—'
+             : (t.slippage >= 0 ? '+' : '') + fmt(t.slippage, 4)}</td>
+         <td class="text-end border-end ${scCls}">${slipCost == null ? '—'
+             : (slipCost >= 0 ? '+' : '') + fmt(slipCost, 2)}</td>
+         <td class="text-end">${fmt(t.cost ?? 0, 2)}</td>
+         <td class="text-end ${totCls}">${t.total == null ? '—' : fmt(t.total, 2)}</td>
        </tr>`;
   });
   addTab('trades',
     `Trades <span class="badge bg-secondary ms-1">${D.trades.length}</span>`,
     `<div class="p-3 tscroll">
        <table class="table table-sm table-hover mb-0">
-         <thead><tr>
-           <th>Date</th><th>Instrument</th>
-           <th>Direction</th><th class="text-end">Quantity</th>
-         </tr></thead>
+         <thead>
+           <tr>
+             <th colspan="5" class="text-center border-end">Decision</th>
+             <th colspan="5" class="text-center border-end">Fill</th>
+             <th class="text-end">Trade cost</th>
+             <th class="text-end">Total</th>
+           </tr><tr>
+             <th>Date</th><th>Instrument</th><th>Direction</th>
+             <th class="text-end">Qty</th><th class="text-end border-end">Price</th>
+             <th>Date</th><th class="text-end">Lag</th>
+             <th class="text-end">Price</th>
+             <th class="text-end">Slippage</th>
+             <th class="text-end border-end">Slip cost</th>
+             <th class="text-end">Trade cost</th>
+             <th class="text-end">Total</th>
+           </tr>
+         </thead>
          <tbody>${rows}</tbody>
        </table>
      </div>`, false);
