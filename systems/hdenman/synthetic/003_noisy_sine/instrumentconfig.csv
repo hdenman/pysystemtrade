@@ -1,0 +1,2 @@
+Instrument,Description,Pointsize,Currency,AssetClass,PerBlock,Percentage,PerTrade,Region
+SYN_NOISY_SINE,"Synthetic sine+noise instrument (period=28d, mean=100.0, amplitude=±20.0, noise_std=5.0)",1.0,USD,Synthetic,0.0,0.0,0.0,SYNTHETIC

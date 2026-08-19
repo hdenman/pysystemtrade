@@ -44,7 +44,7 @@ from sysobjects.adjusted_prices import futuresAdjustedPrices
 
 INSTRUMENT_CODE = "SYN_FLAT"
 PRICE = 1000.0
-NOISE_STD = 5.0
+NOISE_STD = 500.0
 RANDOM_SEED = 42          # reproducible runs
 START_DATE = pd.Timestamp("2020-01-01")
 

@@ -1,13 +1,13 @@
 #YAML
-# systems/hdenman/synthetic/001_flat/system.yaml
+# systems/hdenman/synthetic/002_sine/system.yaml
 #
-# Six-variant EWMAC system applied to SYN_FLAT only.
+# Six-variant EWMAC system applied to SYN_SINE only.
 # No carry.  No rolls.  Single instrument.
 
 start_date: '2020-01-01'
 
 # ---------------------------------------------------------------------------
-# Trading rules — all six standard EWMAC variants
+# Trading rules
 # ---------------------------------------------------------------------------
 
 trading_rules:
@@ -74,7 +74,7 @@ trading_rules:
 forecast_cap: 20.0
 
 # ---------------------------------------------------------------------------
-# Forecast combination — equal weights across all six rules
+# Forecast combination
 # ---------------------------------------------------------------------------
 
 forecast_weights:
@@ -85,8 +85,6 @@ forecast_weights:
   ewmac32_128: 0.166
   ewmac64_256: 0.166
 
-# EWMAC variants on the same instrument are highly correlated;
-# conservative multiplier reflects that.
 forecast_div_multiplier: 1.1
 
 # ---------------------------------------------------------------------------
@@ -98,15 +96,13 @@ notional_trading_capital: 1000000
 base_currency: "USD"
 
 # ---------------------------------------------------------------------------
-# Portfolio — single instrument
+# Portfolio
 # ---------------------------------------------------------------------------
 
 instrument_weights:
-  SYN_FLAT: 1.0
+  SYN_SINE: 1.0
 
 instrument_div_multiplier: 1.0
 
-# Positions scale down proportionally as capital falls (prevents going negative).
-# Gains restore toward 1.0 but never lever up above the original capital.
 capital_multiplier:
   func: syscore.capital.half_compounding
