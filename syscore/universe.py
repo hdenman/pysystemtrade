@@ -8,6 +8,7 @@ class Universe(str, Enum):
     live      = "live"
     backtest  = "backtest"
     synthetic = "synthetic"
+    futures   = "futures"
 
 _DEFAULT = Universe.synthetic
 
