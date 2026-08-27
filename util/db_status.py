@@ -7,10 +7,14 @@ Read-only utility that summarises:
 * the contract price parquet store (per-instrument contract counts, price
   ranges, total observations).
 
-Connection precedence (arguments > ``private_config.yaml`` > ``defaults.yaml``)
-is delegated to :class:`sysdata.mongodb.mongo_connection.mongoDb` for Mongo and
-to ``get_production_config().get_element("parquet_store")`` for the parquet
-root, mirroring :class:`sysdata.data_blob.dataBlob`.
+Connection precedence (arguments > ``PARQUET_DATA`` env var > ``private_config.yaml``
+> ``defaults.yaml``) mirrors :class:`sysdata.data_blob.dataBlob` exactly.
+For the parquet store, if ``PARQUET_DATA`` is set the universe subdirectory
+(``$PARQUET_DATA/<universe>/``) is appended via ``scoped_path``; otherwise the raw
+``parquet_store`` config value is used.  Set ``PYSYS_UNIVERSE=futures`` (or another
+valid universe) before running when you want to inspect the futures data store.
+For MongoDB, :class:`~sysdata.mongodb.mongo_connection.mongoDb` appends
+``_<universe>`` to the database name automatically.
 
 Run as a module::
 
@@ -22,6 +26,7 @@ Run as a module::
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +37,7 @@ from pymongo.errors import PyMongoError
 
 from syscore.constants import arg_not_supplied
 from syscore.exceptions import missingData
+from syscore.universe import scoped_path as _scoped_path
 from sysdata.config.production_config import get_production_config
 from sysdata.mongodb.mongo_connection import clean_mongo_host, mongoDb
 from sysdata.parquet.parquet_futures_per_contract_prices import (
@@ -224,8 +230,11 @@ def report_contract_prices_status(
 
 
 def _resolve_parquet_store(parquet_store) -> str:
+    """Mirror dataBlob.parquet_root_directory: PARQUET_DATA env var wins, then config."""
     if parquet_store is not arg_not_supplied:
         return str(parquet_store)
+    if os.environ.get("PARQUET_DATA"):
+        return _scoped_path("PARQUET_DATA")
     return get_production_config().get_element("parquet_store")
 
 

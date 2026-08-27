@@ -10,6 +10,7 @@ Run as a module::
 """
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,6 +21,7 @@ import pyarrow.parquet as pq
 from syscore.dateutils import Frequency
 
 from syscore.constants import arg_not_supplied
+from syscore.universe import scoped_path as _scoped_path
 from sysdata.config.production_config import get_production_config
 from sysdata.parquet.parquet_futures_per_contract_prices import (
     CONTRACT_COLLECTION,
@@ -37,8 +39,11 @@ _FREQ_COLS = ["Day", "Hour", "Mixed"]   # display order
 
 
 def _resolve_parquet_store(override) -> str:
+    """Mirror dataBlob.parquet_root_directory: PARQUET_DATA env var wins, then config."""
     if override is not arg_not_supplied:
         return str(override)
+    if os.environ.get("PARQUET_DATA"):
+        return _scoped_path("PARQUET_DATA")
     return get_production_config().get_element("parquet_store")
 
 
