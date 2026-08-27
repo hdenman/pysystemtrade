@@ -1,0 +1,122 @@
+#YAML
+# systems/hdenman/backtest/004_four_instrument_mini/system.yaml
+#
+# Six-variant EWMAC system applied to SP500_micro, GOLD_micro, US10, GAS_US_mini.
+# Smaller-contract equivalent of 003_four_instrument.
+# No carry (no multiple-prices data loaded).
+# Equal instrument weights.
+
+# SP500_micro data begins 1997-12-15; allow two full EWMAC(64,256) warm-up
+# periods before the backtest window opens.
+start_date: '2000-01-01'
+
+# ---------------------------------------------------------------------------
+# Trading rules
+# ---------------------------------------------------------------------------
+
+trading_rules:
+  ewmac2_8:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 2
+      Lslow: 8
+    forecast_scalar: 10.6
+
+  ewmac4_16:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 4
+      Lslow: 16
+    forecast_scalar: 7.5
+
+  ewmac8_32:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 8
+      Lslow: 32
+    forecast_scalar: 5.3
+
+  ewmac16_64:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 16
+      Lslow: 64
+    forecast_scalar: 3.75
+
+  ewmac32_128:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 32
+      Lslow: 128
+    forecast_scalar: 2.65
+
+  ewmac64_256:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 64
+      Lslow: 256
+    forecast_scalar: 1.87
+
+forecast_cap: 20.0
+
+# ---------------------------------------------------------------------------
+# Forecast combination
+# ---------------------------------------------------------------------------
+
+forecast_weights:
+  ewmac2_8:    0.167
+  ewmac4_16:   0.167
+  ewmac8_32:   0.167
+  ewmac16_64:  0.167
+  ewmac32_128: 0.166
+  ewmac64_256: 0.166
+
+forecast_div_multiplier: 1.1
+
+# ---------------------------------------------------------------------------
+# Capital
+# ---------------------------------------------------------------------------
+
+percentage_vol_target: 250.0
+notional_trading_capital: 10000000
+base_currency: "USD"
+
+capital_multiplier:
+  func: syscore.capital.half_compounding
+
+# ---------------------------------------------------------------------------
+# Portfolio
+# ---------------------------------------------------------------------------
+
+instrument_weights:
+  SP500_micro: 0.25
+  GOLD_micro:  0.25
+  US10:        0.25
+  GAS_US_mini: 0.25
+
+# SP500_micro/US10 correlation is -0.208 over the post-1997 window
+# (stronger than the -0.006 in 003, driven by the post-2000 flight-to-quality
+# regime).  This actually increases diversification: the implied IDM from the
+# observed correlation matrix is 2.045, above the sqrt(4)=2.0 theoretical
+# maximum for uncorrelated instruments (possible when some pairs are
+# negatively correlated).  Using 1.95 — conservative relative to 2.045 to
+# allow for future regime shifts in the equity/bond relationship.
+instrument_div_multiplier: 1.95

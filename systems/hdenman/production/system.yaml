@@ -1,0 +1,113 @@
+#YAML
+# systems/hdenman/production/system.yaml
+#
+# 8-instrument EWMAC system, EUR-denominated, €500k paper trading.
+# Six EWMAC variants, equal forecast weights, fixed parameters (no estimation).
+
+start_date: '2000-01-01'
+
+# --- Trading rules ---
+
+trading_rules:
+  ewmac2_8:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 2
+      Lslow: 8
+    forecast_scalar: 10.6
+
+  ewmac4_16:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 4
+      Lslow: 16
+    forecast_scalar: 7.5
+
+  ewmac8_32:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 8
+      Lslow: 32
+    forecast_scalar: 5.3
+
+  ewmac16_64:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 16
+      Lslow: 64
+    forecast_scalar: 3.75
+
+  ewmac32_128:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 32
+      Lslow: 128
+    forecast_scalar: 2.65
+
+  ewmac64_256:
+    function: systems.provided.rules.ewmac.ewmac
+    data:
+      - "rawdata.get_daily_prices"
+      - "rawdata.daily_returns_volatility"
+    other_args:
+      Lfast: 64
+      Lslow: 256
+    forecast_scalar: 1.87
+
+forecast_cap: 20.0
+
+# --- Forecast combination ---
+# Equal weights; FDM=1.1 (modest — adjacent EWMAC speeds are highly correlated)
+
+forecast_weights:
+  ewmac2_8:    0.167
+  ewmac4_16:   0.167
+  ewmac8_32:   0.167
+  ewmac16_64:  0.167
+  ewmac32_128: 0.166
+  ewmac64_256: 0.166
+
+forecast_div_multiplier: 1.1
+
+# --- Capital ---
+# base_currency and notional_trading_capital are overridden at runtime
+# by the live account poll (runSystemClassic._get_currency_and_capital).
+# These values serve as static fallback.
+
+percentage_vol_target: 20.0
+notional_trading_capital: 500000
+base_currency: "EUR"
+
+capital_multiplier:
+  func: syscore.capital.fixed_capital
+
+# --- Portfolio ---
+# Equal weights. IDM=2.0 is conservative for 8 well-diversified instruments;
+# re-estimate with sysdiag.yaml_config_with_estimated_parameters after 6 months.
+
+instrument_weights:
+  EUROSTX:      0.125
+  BUND:         0.125
+  SP500_micro:  0.125
+  US10:         0.125
+  GOLD_micro:   0.125
+  CRUDE_W_micro: 0.125
+  EUR_micro:    0.125
+  CORN:         0.125
+
+instrument_div_multiplier: 2.0
