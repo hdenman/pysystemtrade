@@ -9,6 +9,7 @@ from syscore.dateutils import (
     get_date_from_period_and_end_date,
 )
 from syscore.constants import arg_not_supplied
+from syscore.exceptions import ContractNotFound, missingData
 from sysobjects.production.roll_state import ALL_ROLL_INSTRUMENTS
 from syscore.pandas.pdutils import top_and_tail
 from sysdata.data_blob import dataBlob
@@ -623,15 +624,19 @@ class reportingApi(object):
     #### ROLL REPORT ####
     def table_of_roll_data(self, instrument_code: str = ALL_ROLL_INSTRUMENTS):
         result_pd = self._roll_data_as_pd(instrument_code)
+        if result_pd.empty:
+            return table("Status and time to roll in days (no data available)", result_pd)
         result_pd = nice_format_roll_table(result_pd)
         table_result = table("Status and time to roll in days", result_pd)
-
         return table_result
 
     def _roll_data_as_pd(self, instrument_code: str = ALL_ROLL_INSTRUMENTS):
         roll_data_dict = self.roll_data_dict(instrument_code)
 
         result_pd = pd.DataFrame.from_dict(roll_data_dict, orient="index")
+
+        if result_pd.empty or "roll_expiry" not in result_pd.columns:
+            return result_pd
 
         result_pd = result_pd.sort_values("roll_expiry")
 
@@ -649,7 +654,12 @@ class reportingApi(object):
 
         roll_data_dict = {}
         for instrument_code in list_of_instruments:
-            roll_data = get_roll_data_for_instrument(instrument_code, data)
+            try:
+                roll_data = get_roll_data_for_instrument(instrument_code, data)
+            except (ContractNotFound, missingData):
+                # Skip instruments whose contract data is incomplete or stale;
+                # one bad instrument should not abort the entire roll report.
+                continue
             roll_data_dict[instrument_code] = roll_data
 
         return roll_data_dict

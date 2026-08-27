@@ -13,6 +13,7 @@ from syscore.interactive.input import (
 )
 from syscore.interactive.menus import print_menu_of_values_and_get_response
 from syscore.constants import named_object, status, success, failure
+from syscore.exceptions import ContractNotFound, missingData
 from syscore.interactive.display import (
     print_with_landing_strips_around,
     landing_strip,
@@ -54,6 +55,8 @@ EXIT_CODE = "EXIT"
 
 
 def interactive_update_roll_status():
+    from syscore.universe import get_universe
+    print("\n*** Universe: %s (set PYSYS_UNIVERSE to change) ***\n" % get_universe().value)
     with dataBlob(log_name="Interactive_Update-Roll-Status") as data:
         api = reportingApi(data)
         function_to_call = get_rolling_master_function()
@@ -152,7 +155,11 @@ def update_roll_status_auto_cycle_manual_decide(api: reportingApi, data: dataBlo
         data=data, use_default=True
     )
     for instrument_code in instrument_list:
-        roll_data = setup_roll_data_with_state_reporting(api.data, instrument_code)
+        try:
+            roll_data = setup_roll_data_with_state_reporting(api.data, instrument_code)
+        except (ContractNotFound, missingData):
+            print(f"Skipping {instrument_code}: contract data not in DB (run update_sampled_contracts first)")
+            continue
         manually_report_and_update_roll_state_for_code(
             api=api,
             instrument_code=instrument_code,
@@ -171,11 +178,14 @@ def update_roll_status_auto_cycle_manual_confirm(api: reportingApi, data: dataBl
     )
 
     for instrument_code in instrument_list:
-        roll_data = setup_roll_data_with_state_reporting(api.data, instrument_code)
+        try:
+            roll_data = setup_roll_data_with_state_reporting(api.data, instrument_code)
+        except (ContractNotFound, missingData):
+            print(f"Skipping {instrument_code}: contract data not in DB (run update_sampled_contracts first)")
+            continue
         roll_state_required = auto_selected_roll_state_instrument(
             api=api, roll_data=roll_data, auto_parameters=auto_parameters
         )
-
         if roll_state_required is no_change_required:
             warn_not_rolling(instrument_code, auto_parameters)
         else:
@@ -196,11 +206,14 @@ def update_roll_status_full_auto(api: reportingApi, data: dataBlob):
     auto_parameters = get_auto_roll_parameters(data)
 
     for instrument_code in instrument_list:
-        roll_data = setup_roll_data_with_state_reporting(api.data, instrument_code)
+        try:
+            roll_data = setup_roll_data_with_state_reporting(api.data, instrument_code)
+        except (ContractNotFound, missingData):
+            print(f"Skipping {instrument_code}: contract data not in DB (run update_sampled_contracts first)")
+            continue
         roll_state_required = auto_selected_roll_state_instrument(
             api=api, roll_data=roll_data, auto_parameters=auto_parameters
         )
-
         if roll_state_required is no_change_required:
             warn_not_rolling(instrument_code, auto_parameters)
         else:
@@ -225,7 +238,7 @@ def get_days_ahead_to_consider_when_auto_cycling() -> int:
 
 
 def get_list_of_instruments_to_auto_cycle(data: dataBlob, days_ahead: int = 10) -> list:
-    diag_prices = diagPrices()
+    diag_prices = diagPrices(data)
     list_of_potential_instruments = (
         diag_prices.get_list_of_instruments_in_multiple_prices()
     )
@@ -248,7 +261,25 @@ def get_list_of_instruments_to_auto_cycle(data: dataBlob, days_ahead: int = 10) 
 def include_instrument_in_auto_cycle(
     data: dataBlob, instrument_code: str, days_ahead: int = 10
 ) -> bool:
-    days_until_expiry = days_until_earliest_expiry(data, instrument_code)
+    try:
+        days_until_expiry = days_until_earliest_expiry(data, instrument_code)
+    except ContractNotFound:
+        # The priced/carry contract ID from multiple prices has no record in the
+        # MongoDB contracts collection.  This happens when the CSV seed loaded
+        # prices but the contract chain has never been built by
+        # update_sampled_contracts, OR when the contract is so far expired that
+        # it has fallen off the ~6-month lookback window.
+        #
+        # Include it for rolling ONLY if the instrument has at least one contract
+        # record in MongoDB (i.e. it has been seeded from IB at some point).
+        # Instruments with zero contract records have never been seeded and
+        # should be left alone.
+        data_contracts = dataContracts(data)
+        has_any_contracts = len(
+            data_contracts.db_contract_data
+            .get_all_contract_objects_for_instrument_code(instrument_code)
+        ) > 0
+        return has_any_contracts
     return days_until_expiry <= days_ahead
 
 

@@ -37,9 +37,15 @@ class stackHandlerAdditionalSampling(stackHandlerCore):
         return priced_contracts
 
     def _get_all_instruments(self):
-        diag_prices = self.diag_prices
-        instrument_list = diag_prices.get_list_of_instruments_in_multiple_prices()
-
+        # Use the contracts collection (MongoDB) rather than the multiple-prices
+        # parquet store.  The latter contains every instrument that has CSV data
+        # (250+); the former contains only instruments that have been seeded from
+        # IB.  Asking IB for trading hours on an un-seeded or fully-expired
+        # instrument produces a flood of WARNING/CRITICAL log noise for no gain.
+        data_contracts = self.data_contracts
+        instrument_list = (
+            data_contracts.db_contract_data.get_list_of_all_instruments_with_contracts()
+        )
         return instrument_list
 
     def refresh_sampling_for_contract(self, contract: futuresContract):
