@@ -6,6 +6,10 @@ let
   config_path = "/Users/hdenman/workspace/life/06-AutoStockTrading/pysystemtrade_config/";
 in
 {
+  imports = [
+    /Users/hdenman/.dotfiles/nix/devenv-shell-common.nix
+  ];
+
   # https://devenv.sh/basics/
   env.GREET = "pysystemtrade";
 
