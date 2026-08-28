@@ -49,6 +49,7 @@ in
   enterShell = ''
     hello
     git --version
+    export OPENROUTER_API_KEY=$(cat ~/.api-keys/.openrouter-api-key-pysystemtrade)
     export PYSYS_UNIVERSE=''${PYSYS_UNIVERSE:-synthetic}
     echo "Universe: $PYSYS_UNIVERSE"
   '';
