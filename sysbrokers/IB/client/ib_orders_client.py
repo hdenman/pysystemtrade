@@ -195,6 +195,8 @@ class ibOrdersClient(ibContractsClient):
             self.log.critical("Order type %s not recognised!" % order_type)
             return missing_order
 
+        ib_order.tif = "DAY"
+
         if account_id is not arg_not_supplied:
             ib_order.account = account_id
 
