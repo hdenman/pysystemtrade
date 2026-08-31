@@ -148,6 +148,11 @@ def remap_columns_in_pd(df: pd.DataFrame, input_column_mapping: dict) -> pd.Data
     """
     Returns the bool for columns of slice_data for which we have at least one non nan value
 
+    Mapping values may be a string or a list of candidate strings; the first
+    candidate present in *df* is used.  This allows a single config to handle
+    Barchart CSVs that use either ``Latest`` or ``Close`` as the final-price
+    column name.
+
     >>> df = pd.DataFrame(dict(a=[1,2], b=[np.nan, 3]), index=pd.date_range(datetime.datetime(2000,1,1),periods=2))
     >>> remap_columns_in_pd(df, dict(b='a', a='b'))
                 b    a
@@ -157,7 +162,13 @@ def remap_columns_in_pd(df: pd.DataFrame, input_column_mapping: dict) -> pd.Data
 
     new_df = pd.DataFrame(index=df.index)
     for new_col_name, old_col_name in input_column_mapping.items():
-        new_df[new_col_name] = df[old_col_name]
+        candidates = [old_col_name] if isinstance(old_col_name, str) else list(old_col_name)
+        matched = next((c for c in candidates if c in df.columns), None)
+        if matched is None:
+            raise KeyError(
+                f"None of {candidates} found in columns {list(df.columns)}"
+            )
+        new_df[new_col_name] = df[matched]
 
     return new_df
 

@@ -17,6 +17,18 @@ from sysobjects.dict_of_named_futures_per_contract_prices import (
 missing_row = object()
 
 
+def _slice_series_by_date(series: pd.Series, start, end) -> pd.Series:
+    """Slice a date-indexed Series by Timestamp bounds.
+
+    Guards against empty Series stored with a RangeIndex (artefact of
+    importing stub/zero-byte CSV contracts).  Those are treated as having
+    no data in the requested period.
+    """
+    if not isinstance(series.index, pd.DatetimeIndex):
+        return series.iloc[0:0]  # empty slice, preserves dtype
+    return series[start:end]
+
+
 @dataclass
 class rollCalendarWithRollIndex:
     roll_calendar: None
@@ -258,9 +270,11 @@ def _get_next_price_data(
 
         next_price_data_for_contract = next_price_data_for_contract.sort_index()
 
-        next_price_data = next_price_data_for_contract[
-            roll_date_info.start_of_roll_period : roll_date_info.end_of_roll_period
-        ]
+        next_price_data = _slice_series_by_date(
+            next_price_data_for_contract,
+            roll_date_info.start_of_roll_period,
+            roll_date_info.end_of_roll_period,
+        )
 
     return next_price_data
 
@@ -295,9 +309,11 @@ def _get_carry_price_data(
             carry_contract_str
         ]
         carry_price_data_for_contract = carry_price_data_for_contract.sort_index()
-        carry_price_data = carry_price_data_for_contract[
-            roll_date_info.start_of_roll_period : roll_date_info.end_of_roll_period
-        ]
+        carry_price_data = _slice_series_by_date(
+            carry_price_data_for_contract,
+            roll_date_info.start_of_roll_period,
+            roll_date_info.end_of_roll_period,
+        )
 
     return carry_price_data
 

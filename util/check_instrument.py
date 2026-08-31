@@ -549,6 +549,81 @@ def _prompt_instrument(data: dataBlob) -> str:
 
 
 # ---------------------------------------------------------------------------
+# System instrument list loader
+# ---------------------------------------------------------------------------
+
+def _instruments_for_system(system_path: str) -> List[str]:
+    """Load instrument list from a system config YAML.
+
+    ``system_path`` is a dotted module path whose final component is the YAML
+    stem, e.g. ``hdenman.production`` resolves to
+    ``systems/hdenman/production/system.yaml`` via the standard
+    ``<prefix>.system.yaml`` convention, or falls back to
+    ``<prefix>.<stem>.yaml`` when the path already ends in a filename stem.
+
+    Instruments are taken from ``instrument_weights`` keys first, then
+    ``instrument_list``.
+    """
+    from sysdata.config.configdata import Config
+
+    # Try ``<system_path>.system.yaml`` first (the production convention), then
+    # ``<system_path>.yaml`` for configs whose last component is the stem.
+    for yaml_ref in (
+        f"{system_path}.system.yaml",
+        f"{system_path}.yaml",
+    ):
+        try:
+            config = Config(yaml_ref)
+            break
+        except Exception:
+            continue
+    else:
+        raise FileNotFoundError(
+            f"Could not locate a system YAML for {system_path!r}.\n"
+            f"Tried: {system_path}.system.yaml and {system_path}.yaml"
+        )
+
+    iw: dict = config.get_element_or_default("instrument_weights", {})
+    if iw:
+        return sorted(iw.keys())
+
+    il: list = config.get_element_or_default("instrument_list", [])
+    if il:
+        return sorted(il)
+
+    raise ValueError(
+        f"System config {yaml_ref!r} has neither instrument_weights nor instrument_list"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Interactive instrument selection
+# ---------------------------------------------------------------------------
+
+def _prompt_instrument(data: dataBlob) -> str:
+    diag = diagPrices(data)
+    try:
+        instruments = sorted(diag.get_list_of_instruments_in_multiple_prices(ignore_stale=False))
+    except Exception:
+        instruments = []
+
+    if not instruments:
+        return input("Instrument code: ").strip()
+
+    print("\nInstruments with multiple prices:")
+    for i, code in enumerate(instruments, 1):
+        print(f"  {i:3}.  {code}")
+    print()
+
+    raw = input("Instrument code (or number): ").strip()
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(instruments):
+            return instruments[idx]
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -562,6 +637,16 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         nargs="?",
         default=None,
         help="Instrument code, e.g. EUR_micro.  Omit for interactive selection.",
+    )
+    parser.add_argument(
+        "--system",
+        default=None,
+        metavar="SYSTEM",
+        help=(
+            "Dotted path to a system config, e.g. hdenman.production.  "
+            "Checks every instrument defined in that system's instrument_weights "
+            "(or instrument_list).  Mutually exclusive with a positional instrument."
+        ),
     )
     parser.add_argument(
         "--no-color",
@@ -578,8 +663,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.no_color:
         _USE_COLOR = False
 
-    instrument_code = args.instrument
+    if args.system and args.instrument:
+        print("error: --system and a positional instrument are mutually exclusive.", file=sys.stderr)
+        return 2
 
+    if args.system:
+        try:
+            instruments = _instruments_for_system(args.system)
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+
+        print(
+            _colored(f"\nSystem: {args.system}  ({len(instruments)} instruments)", _BOLD)
+        )
+        all_ok = True
+        for code in instruments:
+            ok = check_instrument(code)
+            if not ok:
+                all_ok = False
+        return 0 if all_ok else 1
+
+    instrument_code = args.instrument
     if not instrument_code:
         with dataBlob(log_name="check_instrument") as data:
             instrument_code = _prompt_instrument(data)

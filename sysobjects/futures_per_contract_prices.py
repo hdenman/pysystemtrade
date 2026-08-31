@@ -46,7 +46,10 @@ class futuresContractPrices(pd.DataFrame):
         Our graceful fail is to return an empty, but valid, dataframe
         """
 
-        data = pd.DataFrame(columns=PRICE_DATA_COLUMNS)
+        data = pd.DataFrame(
+            columns=PRICE_DATA_COLUMNS,
+            index=pd.DatetimeIndex([]),
+        )
 
         futures_contract_prices = futuresContractPrices(data)
 

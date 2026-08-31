@@ -18,7 +18,7 @@ BARCHART_CONFIG = ConfigCsvFuturesPrices(
     input_skipfooter=0,
     input_date_format="%Y-%m-%dT%H:%M:%S",
     input_column_mapping=dict(
-        OPEN="Open", HIGH="High", LOW="Low", FINAL="Latest", VOLUME="Volume"
+        OPEN="Open", HIGH="High", LOW="Low", FINAL=["Latest", "Close"], VOLUME="Volume"
     ),
 )
 
@@ -143,6 +143,9 @@ def init_db_with_split_freq_csv_prices_for_code(
 def write_prices_for_contract_at_frequency(
     contract, prices, frequency, ignore_duplication=False
 ):
+    if len(prices) == 0:
+        print(f"Skipping {contract} @ {frequency}: no data")
+        return
     print(f"{frequency} .csv prices are \n{str(prices)}")
     print("Writing to db")
     db_prices.write_prices_at_frequency_for_contract_object(
