@@ -1,6 +1,4 @@
 from __future__ import print_function
-modified by omp
-modified by omp
 import os
 import sys
 import platform
@@ -26,8 +24,6 @@ def read(fname):
 
 
 def package_files(directory, extension="yaml"):
-import argparse
-from datetime import date
     paths = []
     for path, directories, filenames in os.walk(directory):
         for filename in filenames:
@@ -52,32 +48,26 @@ control_yaml_files = package_files(control_dir, "yaml")
 
 data_csv_path = os.path.join(dir_this_file(), "data")
 data_csv_files = package_files(data_csv_path, "csv")
-def _load_csv_prices(start_date: date = None, end_date: date = None) -> futuresAdjustedPrices:
-    csv_file = resolve_path_and_filename_for_package(CSV_PATH)
-    raw = pd.read_csv(csv_file, index_col=0, parse_dates=True)
-    raw.index = pd.to_datetime(raw.index, utc=False)
-    prices = raw.iloc[:, 0]
 
-    # CSV has intraday rows — take last price each business day
-    daily = prices.resample("1B").last().dropna()
-    daily.index = daily.index.normalize()
+init_csv_path = os.path.join(dir_this_file(), "sysinit")
+init_csv_files = package_files(init_csv_path, "csv")
 
-    if start_date is not None:
-        daily = daily[daily.index >= pd.Timestamp(start_date)]
-    if end_date is not None:
-        daily = daily[daily.index <= pd.Timestamp(end_date)]
+test_data_csv_path = os.path.join(dir_this_file(), "sysdata")
+test_data_csv_files = package_files(test_data_csv_path, "csv")
 
-    daily.name = "price"
-    return futuresAdjustedPrices(daily)
+default_config_path = os.path.join(dir_this_file(), "sysdata", "config")
+default_config_yaml_files = package_files(default_config_path, "yaml")
+
+brokers_csv_path = os.path.join(dir_this_file(), "sysbrokers")
 brokers_csv_files = package_files(brokers_csv_path, "csv")
 
 brokers_yaml_path = os.path.join(dir_this_file(), "sysbrokers")
 brokers_yaml_files = package_files(brokers_yaml_path, "yaml")
 
 package_data = {
-def write_parquet_prices(start_date: date = None, end_date: date = None) -> None:
-    store  = _price_store()
-    prices = _load_csv_prices(start_date=start_date, end_date=end_date)
+    "": private_yaml_files
+    + provided_yaml_files
+    + data_csv_files
     + test_data_csv_files
     + brokers_csv_files
     + brokers_yaml_files
@@ -95,20 +85,13 @@ setup(
         "Python framework for running systems as in Robert Carver's book Systematic Trading"
         " (https://www.systematicmoney.org/systematic-trading)"
     ),
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Load SP500 adjusted prices from CSV to parquet store."
-    )
-    parser.add_argument("--start", type=date.fromisoformat, help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", type=date.fromisoformat, help="End date (YYYY-MM-DD)")
-    args = parser.parse_args()
-
-    print(f"universe : backtest")
-    print(f"parquet  : {scoped_path('PARQUET_DATA')}")
-    print()
-
-    print(f"Loading {INSTRUMENT_CODE} from CSV …")
-    write_parquet_prices(start_date=args.start, end_date=args.end)
+    license="GNU GPL v3",
+    keywords="systematic trading interactive brokers",
+    url="https://qoppac.blogspot.com/p/pysystemtrade.html",
+    packages=find_packages(),
+    package_data=package_data,
+    long_description=read("README.md"),
+    install_requires=[
         "pandas==2.1.3",
         "matplotlib>=3.0.0",
         "ib_async>=2,<3",
