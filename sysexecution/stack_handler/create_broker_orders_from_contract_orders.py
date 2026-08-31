@@ -111,8 +111,17 @@ class stackHandlerCreateBrokerOrders(stackHandlerForFills):
             )
         )
         if instrument_locked or market_closed:
-            # we don't log to avoid spamming
-            # print("market is closed for order %s" % str(original_contract_order))
+            # we don't log to avoid spamming in the automated stack handler,
+            # but a debug message helps diagnose manual submissions
+            self.log.debug(
+                "Order %s not submitted: %s"
+                % (
+                    str(original_contract_order),
+                    "instrument locked" if instrument_locked else "market closed",
+                ),
+                **original_contract_order.log_attributes(),
+                method="temp",
+            )
             return missing_order
 
         # RESIZE

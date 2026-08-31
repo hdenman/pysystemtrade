@@ -1,3 +1,5 @@
+import sys
+
 from syscore.exceptions import missingContract, ContractNotFound
 from syscore.constants import success
 
@@ -35,9 +37,22 @@ def update_sampled_contracts():
 
     Contracts are never deleted from the database
 
+    Accepts an optional instrument code as a CLI argument (e.g. python update_sampled_contracts.py EDOLLAR).
+    If not supplied, prompts interactively (Enter for ALL).
+
     """
     with dataBlob(log_name="Update-Sampled_Contracts") as data:
         update_contracts_object = updateSampledContracts(data)
+
+        cli_instrument = sys.argv[1] if len(sys.argv) > 1 else None
+
+        if cli_instrument is not None:
+            instrument_code = cli_instrument
+            update_contracts_object.update_sampled_contracts(
+                instrument_code=instrument_code
+            )
+            return success
+
         instrument_code = get_valid_instrument_code_from_user(
             allow_all=True, all_code=ALL_INSTRUMENTS
         )
