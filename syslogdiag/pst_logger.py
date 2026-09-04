@@ -195,6 +195,7 @@ class pst_logger(object):
 
     def critical(self, text: str, **kwargs) -> logEntry:
         msg_level = LOG_MAPPING["critical"]
+        text = f"\n{text}\n"
         return self.log(text, msglevel=msg_level, **kwargs)
 
     def log(
