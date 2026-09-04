@@ -242,14 +242,18 @@ def _is_it_time_to_run(process_to_run: processToRun) -> bool:
     diag_process = process_to_run.diag_process
     process_name = process_to_run.process_name
     time_to_run = diag_process.is_it_time_to_run(process_name)
+    start_time = diag_process.get_start_time(process_name)
+    start_time_str = start_time.strftime("%H:%M")
 
-    TIME_TO_RUN_REASON = "because Not yet time to run"
+    time_to_run_reason = f"because Not yet time to run (start time {start_time_str})"
     wait_reporter = process_to_run.wait_reporter
 
     if time_to_run:
-        wait_reporter.clear_wait_condition(TIME_TO_RUN_REASON, NOT_STARTING_CONDITION)
+        wait_reporter.clear_all_reasons_for_condition(NOT_STARTING_CONDITION)
     else:
-        wait_reporter.report_wait_condition(TIME_TO_RUN_REASON, NOT_STARTING_CONDITION)
+        wait_reporter.report_wait_condition(
+            time_to_run_reason, NOT_STARTING_CONDITION
+        )
 
     return time_to_run
 

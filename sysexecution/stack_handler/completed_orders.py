@@ -1,5 +1,6 @@
-from sysexecution.orders.named_order_objects import no_children
+from sysexecution.orders.named_order_objects import no_children, missing_order
 
+from sysexecution.order_stacks.order_stack import missingOrder
 from sysexecution.stack_handler.stackHandlerCore import stackHandlerCore, orderFamily
 from sysproduction.data.orders import dataOrders
 
@@ -65,6 +66,12 @@ class stackHandlerForCompletions(stackHandlerCore):
         instrument_order = self.instrument_stack.get_order_with_id_from_stack(
             instrument_order_id
         )
+        if instrument_order is missing_order:
+            self.log.warning(
+                f"Instrument order {instrument_order_id} missing from stack"
+            )
+            return orderFamily(instrument_order_id, [], [])
+
         list_of_contract_order_id = instrument_order.children
         if list_of_contract_order_id is no_children:
             # childless, grandchildless
@@ -72,7 +79,8 @@ class stackHandlerForCompletions(stackHandlerCore):
 
         list_of_broker_order_id = (
             self.get_all_grandchildren_from_list_of_contract_order_id(
-                list_of_contract_order_id
+                list_of_contract_order_id,
+                parent_instrument_order_id=instrument_order_id,
             )
         )
 
@@ -85,7 +93,9 @@ class stackHandlerForCompletions(stackHandlerCore):
         return order_family
 
     def get_all_grandchildren_from_list_of_contract_order_id(
-        self, list_of_contract_order_id: list
+        self,
+        list_of_contract_order_id: list,
+        parent_instrument_order_id: int = None,
     ) -> list:
         list_of_broker_order_id = []
 
@@ -93,6 +103,11 @@ class stackHandlerForCompletions(stackHandlerCore):
             contract_order = self.contract_stack.get_order_with_id_from_stack(
                 contract_order_id
             )
+            if contract_order is missing_order:
+                self.log.warning(
+                    f"Contract order {contract_order_id} (child of instrument order {parent_instrument_order_id}) missing from stack"
+                )
+                continue
 
             broker_order_children = contract_order.children
             if broker_order_children is not no_children:
@@ -179,6 +194,12 @@ class stackHandlerForCompletions(stackHandlerCore):
         instrument_order = self.instrument_stack.get_order_with_id_from_stack(
             order_family.instrument_order_id
         )
+        if instrument_order is missing_order:
+            self.log.warning(
+                f"Cannot add order family to historic orders database: missing instrument order {order_family.instrument_order_id}"
+            )
+            return
+
         contract_order_list = self.contract_stack.get_list_of_orders_from_order_id_list(
             order_family.list_of_contract_order_id
         )
@@ -191,14 +212,28 @@ class stackHandlerForCompletions(stackHandlerCore):
         order_data.add_historic_orders_to_data(
             instrument_order, contract_order_list, broker_order_list
         )
-
     def deactivate_family_of_orders(self, order_family: orderFamily):
         # Make orders inactive
         # A subsequent process will delete them
-        self.instrument_stack.deactivate_order(order_family.instrument_order_id)
+        try:
+            self.instrument_stack.deactivate_order(order_family.instrument_order_id)
+        except missingOrder:
+            self.log.warning(
+                f"Cannot deactivate missing instrument order {order_family.instrument_order_id}"
+            )
 
         for contract_order_id in order_family.list_of_contract_order_id:
-            self.contract_stack.deactivate_order(contract_order_id)
+            try:
+                self.contract_stack.deactivate_order(contract_order_id)
+            except missingOrder:
+                self.log.warning(
+                    f"Cannot deactivate missing contract order {contract_order_id} (parent instrument order {order_family.instrument_order_id})"
+                )
 
         for broker_order_id in order_family.list_of_broker_order_id:
-            self.broker_stack.deactivate_order(broker_order_id)
+            try:
+                self.broker_stack.deactivate_order(broker_order_id)
+            except missingOrder:
+                self.log.warning(
+                    f"Cannot deactivate missing broker order {broker_order_id} (parent instrument order {order_family.instrument_order_id})"
+                )
