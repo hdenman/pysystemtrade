@@ -101,13 +101,13 @@ capital_multiplier:
 # re-estimate with sysdiag.yaml_config_with_estimated_parameters after 6 months.
 
 instrument_weights:
+  EUR_micro:    0.125
+  GOLD_micro:   0.125
   EUROSTX:      0.125
   BUND:         0.125
   SP500_micro:  0.125
   US10:         0.125
-  GOLD_micro:   0.125
   CRUDE_W_micro: 0.125
-  EUR_micro:    0.125
   CORN:         0.125
 
 instrument_div_multiplier: 2.0
