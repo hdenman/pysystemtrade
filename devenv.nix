@@ -1,13 +1,14 @@
 { pkgs, lib, config, inputs, ... }:
 
 let
-  source_path = "/Users/hdenman/workspace/pysystemtrade";
-  data_path = "/Users/hdenman/pysystemtrade-data";
-  config_path = "/Users/hdenman/workspace/life/06-AutoStockTrading/pysystemtrade_config/";
+  home = builtins.getEnv "HOME";
+  source_path = "${home}/algo-trading/pysystemtrade";
+  data_path = "${home}/algo-trading/pysystemtrade-data";
+  config_path = "${home}/algo-trading/pysystemtrade_config";
 in
 {
   imports = [
-    /Users/hdenman/.dotfiles/nix/devenv-shell-common.nix
+    (builtins.getEnv "HOME" + "/dotfiles/nix/devenv-shell-common.nix")
   ];
 
   # https://devenv.sh/basics/
@@ -15,6 +16,7 @@ in
 
   env.PYSYS_CODE="${source_path}";
   env.PYSYS_PRIVATE_CONFIG_DIR=config_path;
+  env.PYTHONPATH = lib.mkForce "${source_path}";
   env.SCRIPT_PATH="${source_path}/sysproduction/linux/scripts";
 
   env.PARQUET_DATA="${data_path}/parquet/";
@@ -38,8 +40,43 @@ in
   # https://devenv.sh/services/
   services.mongodb = {
     enable = true;
-  };
+    package =
+      if pkgs.stdenv.hostPlatform.isLinux && pkgs.stdenv.hostPlatform.isx86_64
+      then
+        let
+          mongodWrapper = pkgs.writeShellScriptBin "mongod" ''
+            #!/usr/bin/env bash
+            SQLITE_DIR=""
+            while [[ $# -gt 0 ]]; do
+              case "$1" in
+                --dbpath)
+                  SQLITE_DIR="$2"
+                  shift 2
+                  ;;
+                *)
+                  shift
+                  ;;
+              esac
+            done
 
+            if [ -n "$SQLITE_DIR" ]; then
+              mkdir -p "$SQLITE_DIR"
+              exec ${pkgs.ferretdb}/bin/ferretdb --handler=sqlite --sqlite-url="file:''${SQLITE_DIR}/" --telemetry=disabled
+            else
+              exec ${pkgs.ferretdb}/bin/ferretdb --handler=sqlite --telemetry=disabled
+            fi
+          '';
+        in
+        pkgs.symlinkJoin {
+          name = "ferretdb-mongod-wrapper";
+          paths = [
+            mongodWrapper
+            pkgs.mongodb-tools
+            pkgs.mongosh
+          ];
+        }
+      else pkgs.mongodb-ce;
+  };
   # https://devenv.sh/scripts/
   scripts.hello.exec = ''
     echo hello from $GREET
@@ -50,7 +87,11 @@ in
     hello
     git --version
     export OPENROUTER_API_KEY=$(cat ~/.api-keys/.openrouter-api-key-pysystemtrade)
-    export PYSYS_UNIVERSE=''${PYSYS_UNIVERSE:-synthetic}
+    if [ "$(hostname)" = "marvin" ]; then
+      export PYSYS_UNIVERSE=''${PYSYS_UNIVERSE:-futures}
+    else
+      export PYSYS_UNIVERSE=''${PYSYS_UNIVERSE:-synthetic}
+    fi
     echo "Universe: $PYSYS_UNIVERSE"
   '';
 
@@ -74,6 +115,7 @@ in
   languages.python = {
     enable = true;
     version = "3.12";
+    libraries = [ pkgs.zlib ];
     venv.enable = true;
     uv = {
       enable = true;
