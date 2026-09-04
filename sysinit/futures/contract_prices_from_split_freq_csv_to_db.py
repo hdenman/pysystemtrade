@@ -1,6 +1,6 @@
 from syscore.constants import arg_not_supplied
 from syscore.dateutils import MIXED_FREQ, HOURLY_FREQ, DAILY_PRICE_FREQ
-from syscore.fileutils import resolve_path_and_filename_for_package
+from syscore.fileutils import get_resolved_pathname
 from syscore.pandas.frequency import merge_data_with_different_freq
 from sysdata.config.production_config import get_production_config
 from sysdata.csv.csv_futures_contract_prices import ConfigCsvFuturesPrices
@@ -164,10 +164,9 @@ def write_prices_for_contract_at_frequency(
 if __name__ == "__main__":
     print("Will overwrite existing prices. CTL-C to abort.")
 
-    datapath = resolve_path_and_filename_for_package(
-        get_production_config().get_element_or_default("barchart_path", None)
-    )
-
+    raw_datapath = get_production_config().get_element_or_default("barchart_path", None)
+    datapath = get_resolved_pathname(raw_datapath)
+    print(f"Using CSV data path: {datapath}")
     do_another = True
     while do_another:
         EXIT_STR = "Finished: Exit"
