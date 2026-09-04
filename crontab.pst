@@ -1,0 +1,48 @@
+# crontab for pysystemtrade (futures universe)
+# Using devenv shell and python module execution.
+
+PATH=/home/hdenman/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin:/usr/bin:/bin
+SHELL=/bin/sh
+
+# ==============================================================================
+# Startup / Reboot Tasks
+# ==============================================================================
+# Start MongoDB service
+@reboot          cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'mongod --dbpath "$MONGO_DATA" >> "$ECHO_PATH/mongodb.txt" 2>&1'
+
+# Run pysystemtrade startup checks/tasks
+@reboot          cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.startup >> "$ECHO_PATH/startup.txt" 2>&1'
+
+# ==============================================================================
+# Daily Production Processes (Monday - Friday)
+# ==============================================================================
+
+# 00:15 - Order Stack Handler (Runs all trading day)
+15 00 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_stack_handler >> "$ECHO_PATH/run_stack_handler.txt" 2>&1'
+
+# 00:45 - Capital Update Process
+45 00 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_capital_update >> "$ECHO_PATH/run_capital_update.txt" 2>&1'
+
+# 07:05 - Morning FX and Contract Sampling Updates
+05 07 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_fx_and_contract_updates >> "$ECHO_PATH/run_daily_fx_and_contract_updates.txt" 2>&1'
+
+# 07:05 - Daily Historical Price Downloads
+05 07 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_price_updates >> "$ECHO_PATH/run_daily_price_updates.txt" 2>&1'
+
+# 20:30 - System Backtest Updates (Generates position targets)
+30 20 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_systems >> "$ECHO_PATH/run_systems.txt" 2>&1'
+
+# 20:45 - Strategy Order Generator (Converts target positions to broker orders)
+45 20 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_strategy_order_generator >> "$ECHO_PATH/run_strategy_order_generator.txt" 2>&1'
+
+# 21:00 - Log & Echo Maintenance / File Cleanup
+00 21 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_cleaners >> "$ECHO_PATH/run_cleaners.txt" 2>&1'
+
+# 21:15 - Database & State Backups
+15 21 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_backups >> "$ECHO_PATH/run_backups_echos.txt" 2>&1'
+
+# 21:30 - Status & Risk Reports Generation
+30 21 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_reports >> "$ECHO_PATH/run_reports.txt" 2>&1'
+
+# 23:00 - Multiple / Adjusted Prices Update
+00 23 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_update_multiple_adjusted_prices >> "$ECHO_PATH/run_daily_update_multiple_adjusted_prices.txt" 2>&1'
