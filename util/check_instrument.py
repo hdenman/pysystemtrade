@@ -11,8 +11,8 @@ present, current, and free of business-day gaps:
   * FX conversion prices for the instrument's settlement currency
 
 A "gap" is any business day (Monday–Friday) in the span [first observation,
-today] that has no observation.  Public holidays are *not* excluded, so an
-occasional 1-day gap around major holidays is expected.
+today] that has no observation, excluding the hard-coded market-closed days
+below.
 
 Usage::
 
@@ -77,21 +77,65 @@ def _status_str(status: str) -> str:
     return _colored(f"[{status}]", _COLOR_MAP.get(status, ""))
 
 
+
+# ---------------------------------------------------------------------------
+# Market-closed days
+# ---------------------------------------------------------------------------
+
+# Hard-coded known exchange closures which are acceptable missing observations.
+# This list covers the historical EUROSTX/STOXX futures data shipped/used here:
+# New Year's Day, Good Friday, Easter Monday, May Day, Christmas Eve, Christmas
+# Day, Boxing Day, New Year's Eve, plus the two observed Whit Monday closures.
+MARKET_CLOSED_DAYS = (
+    "1999-01-01", "1999-04-02", "1999-04-05", "1999-12-24", "1999-12-31", "2000-04-21",
+    "2000-04-24", "2000-05-01", "2000-12-25", "2000-12-26", "2001-01-01", "2001-04-13",
+    "2001-04-16", "2001-05-01", "2001-12-24", "2001-12-25", "2001-12-26", "2001-12-31",
+    "2002-01-01", "2002-03-29", "2002-04-01", "2002-05-01", "2002-12-24", "2002-12-25",
+    "2002-12-26", "2002-12-31", "2003-01-01", "2003-04-18", "2003-04-21", "2003-05-01",
+    "2003-12-24", "2003-12-25", "2003-12-26", "2003-12-31", "2004-01-01", "2004-04-09",
+    "2004-04-12", "2004-12-24", "2004-12-31", "2005-03-25", "2005-03-28", "2005-12-26",
+    "2006-04-14", "2006-04-17", "2006-05-01", "2006-12-25", "2006-12-26", "2007-01-01",
+    "2007-04-06", "2007-04-09", "2007-05-01", "2007-05-28", "2007-12-24", "2007-12-25",
+    "2007-12-26", "2007-12-31", "2008-01-01", "2008-03-21", "2008-03-24", "2008-05-01",
+    "2008-12-24", "2008-12-25", "2008-12-26", "2008-12-31", "2009-01-01", "2009-04-10",
+    "2009-04-13", "2009-05-01", "2009-12-24", "2009-12-25", "2009-12-31", "2010-01-01",
+    "2010-04-02", "2010-04-05", "2010-12-24", "2010-12-31", "2011-04-22", "2011-04-25",
+    "2011-12-26", "2012-04-06", "2012-04-09", "2012-05-01", "2012-12-24", "2012-12-25",
+    "2012-12-26", "2012-12-31", "2013-01-01", "2013-03-29", "2013-04-01", "2013-05-01",
+    "2013-12-24", "2013-12-25", "2013-12-26", "2013-12-31", "2014-01-01", "2014-04-18",
+    "2014-04-21", "2014-05-01", "2014-12-24", "2014-12-25", "2014-12-26", "2014-12-31",
+    "2015-01-01", "2015-04-03", "2015-04-06", "2015-05-01", "2015-05-25", "2015-12-24",
+    "2015-12-25", "2015-12-31", "2016-01-01", "2016-03-25", "2016-03-28", "2016-12-26",
+    "2017-04-14", "2017-04-17", "2017-05-01", "2017-12-25", "2017-12-26", "2018-01-01",
+    "2018-03-30", "2018-04-02", "2018-05-01", "2018-12-24", "2018-12-25", "2018-12-26",
+    "2018-12-31", "2019-01-01", "2019-04-19", "2019-04-22", "2019-05-01", "2019-12-24",
+    "2019-12-25", "2019-12-26", "2019-12-31", "2020-01-01", "2020-04-10", "2020-04-13",
+    "2020-05-01", "2020-12-24", "2020-12-25", "2020-12-31", "2021-01-01", "2021-04-02",
+    "2021-04-05", "2021-12-24", "2021-12-31", "2022-04-15", "2022-04-18", "2022-12-26",
+    "2023-04-07", "2023-04-10", "2023-05-01", "2023-12-25", "2023-12-26", "2024-01-01",
+    "2024-03-29", "2024-04-01", "2024-05-01", "2024-12-24", "2024-12-25", "2024-12-26",
+    "2024-12-31", "2025-01-01", "2025-04-18", "2025-04-21", "2025-05-01", "2025-12-24",
+    "2025-12-25", "2025-12-26", "2025-12-31", "2026-01-01", "2026-04-03", "2026-04-06",
+    "2026-05-01", "2026-12-24", "2026-12-25", "2026-12-31",
+)
+_MARKET_CLOSED_DAY_INDEX = pd.DatetimeIndex(MARKET_CLOSED_DAYS)
+
 # ---------------------------------------------------------------------------
 # Gap detection
 # ---------------------------------------------------------------------------
 
 def _business_day_gaps(
     series: pd.Series, end: Optional[pd.Timestamp] = None
-) -> Tuple[int, List[Tuple[pd.Timestamp, pd.Timestamp]]]:
-    """Return (total_missing_bdays, [(gap_start, gap_end), ...]).
+) -> Tuple[int, List[Tuple[pd.Timestamp, pd.Timestamp]], int]:
+    """Return (missing_bdays, gap_ranges, ignored_market_closed_bdays).
 
-    Gaps are contiguous runs of missing business days.  ``end`` defaults to
-    today so we also flag if the series has not been updated recently.
+    Gaps are contiguous runs of missing business days after removing acceptable
+    market-closed dates.  ``end`` defaults to today so we also flag if the
+    series has not been updated recently.
     """
     clean = series.dropna()
     if clean.empty:
-        return 0, []
+        return 0, [], 0
 
     # Cast to DatetimeIndex so Pyright sees .normalize() / floor-day ops.
     dti = pd.DatetimeIndex(clean.index)
@@ -100,10 +144,16 @@ def _business_day_gaps(
 
     all_bdays: pd.DatetimeIndex = pd.bdate_range(start, end)
     observed: pd.DatetimeIndex = dti.normalize().unique()
-    missing: pd.DatetimeIndex = all_bdays.difference(observed)
+    missing_including_market_closed: pd.DatetimeIndex = all_bdays.difference(
+        observed
+    )
+    missing: pd.DatetimeIndex = missing_including_market_closed.difference(
+        _MARKET_CLOSED_DAY_INDEX
+    )
+    ignored_market_closed = len(missing_including_market_closed) - len(missing)
 
     if missing.empty:
-        return 0, []
+        return 0, [], ignored_market_closed
 
     # Group into contiguous runs
     gaps: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
@@ -118,7 +168,7 @@ def _business_day_gaps(
         prev = d
     gaps.append((run_start, prev))
 
-    return len(missing), gaps
+    return len(missing), gaps, ignored_market_closed
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +218,7 @@ def _gap_check(
         else None
     )
 
-    missing_count, gaps = _business_day_gaps(clean, end=today)
+    missing_count, gaps, ignored_market_closed = _business_day_gaps(clean, end=today)
 
     status = PASS
     notes: List[str] = []
@@ -190,6 +240,8 @@ def _gap_check(
             notes.append(f"  … ({len(gaps) - 5} more gaps)")
 
     detail = f"{n:,} obs  {first.date()} → {last.date()}"
+    if ignored_market_closed:
+        detail = f"{detail}; {ignored_market_closed} market-closed day(s) ignored"
     return CheckResult(label, status, detail, notes)
 
 
