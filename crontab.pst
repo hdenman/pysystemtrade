@@ -8,7 +8,7 @@ SHELL=/bin/sh
 # Startup / Reboot Tasks
 # ==============================================================================
 # Start MongoDB service
-@reboot          cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'mongod --dbpath "$MONGO_DATA" >> "$ECHO_PATH/mongodb.txt" 2>&1'
+@reboot          cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'mongod --dbpath "$MONGO_DATA_U" >> "$ECHO_PATH/mongodb.txt" 2>&1'
 
 # Run pysystemtrade startup checks/tasks
 @reboot          cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.startup >> "$ECHO_PATH/startup.txt" 2>&1'
