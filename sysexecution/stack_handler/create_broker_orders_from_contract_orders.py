@@ -48,15 +48,6 @@ class stackHandlerCreateBrokerOrders(stackHandlerForFills):
             return False
 
         if datetime.datetime.now() < retry_after:
-            self.log.debug(
-                "Order %s not submitted: market closed backoff in effect until %s"
-                % (
-                    str(original_contract_order),
-                    retry_after,
-                ),
-                **original_contract_order.log_attributes(),
-                method="temp",
-            )
             return True
 
         del self.market_closed_contract_order_backoff[contract_key]
