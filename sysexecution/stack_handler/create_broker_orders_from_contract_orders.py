@@ -1,3 +1,4 @@
+import datetime
 from copy import copy
 from syscore.objects import (
     resolve_function,
@@ -18,7 +19,88 @@ from sysexecution.stack_handler.fills import stackHandlerForFills
 from sysproduction.data.controls import dataLocks
 
 
+MAX_MARKET_CLOSED_BACKOFF = datetime.timedelta(hours=1)
+
+
 class stackHandlerCreateBrokerOrders(stackHandlerForFills):
+    def set_market_closed_order_backoff(self, use_market_closed_order_backoff: bool = True):
+        self._use_market_closed_order_backoff = use_market_closed_order_backoff
+
+    @property
+    def use_market_closed_order_backoff(self) -> bool:
+        return getattr(self, "_use_market_closed_order_backoff", False)
+
+    @property
+    def market_closed_contract_order_backoff(self) -> dict:
+        if not hasattr(self, "_market_closed_contract_order_backoff"):
+            self._market_closed_contract_order_backoff = {}
+        return self._market_closed_contract_order_backoff
+
+    def _contract_order_is_in_market_closed_backoff(
+        self, original_contract_order: contractOrder
+    ) -> bool:
+        if not self.use_market_closed_order_backoff:
+            return False
+
+        contract_key = original_contract_order.futures_contract.key
+        retry_after = self.market_closed_contract_order_backoff.get(contract_key)
+        if retry_after is None:
+            return False
+
+        if datetime.datetime.now() < retry_after:
+            self.log.debug(
+                "Order %s not submitted: market closed backoff in effect until %s"
+                % (
+                    str(original_contract_order),
+                    retry_after,
+                ),
+                **original_contract_order.log_attributes(),
+                method="temp",
+            )
+            return True
+
+        del self.market_closed_contract_order_backoff[contract_key]
+        return False
+
+    def _market_is_closed_for_contract_order(
+        self, original_contract_order: contractOrder
+    ) -> tuple[bool, datetime.datetime | None, bool]:
+        try:
+            trading_hours = self.data_broker.get_trading_hours_for_contract(
+                original_contract_order.futures_contract
+            )
+            return (
+                not trading_hours.okay_to_trade_now(),
+                trading_hours.next_opening_time(),
+                True,
+            )
+        except Exception:
+            fallback_closed = not self.data_broker.is_contract_okay_to_trade(
+                original_contract_order.futures_contract
+            )
+            return (fallback_closed, None, False)
+
+    def _set_market_closed_backoff_for_contract_order(
+        self, original_contract_order: contractOrder, next_opening_time: datetime.datetime | None
+    ) -> datetime.datetime:
+        latest_retry_time = datetime.datetime.now() + MAX_MARKET_CLOSED_BACKOFF
+        if next_opening_time is None:
+            retry_time = latest_retry_time
+        else:
+            retry_time = min(next_opening_time, latest_retry_time)
+
+        self.market_closed_contract_order_backoff[
+            original_contract_order.futures_contract.key
+        ] = retry_time
+        return retry_time
+
+    def _clear_market_closed_backoff_for_contract_order(
+        self, original_contract_order: contractOrder
+    ):
+        contract_key = original_contract_order.futures_contract.key
+        if contract_key in self.market_closed_contract_order_backoff:
+            del self.market_closed_contract_order_backoff[contract_key]
+
     def create_broker_orders_from_contract_orders(self):
         """
         Create broker orders from contract orders. These become child orders of the contract parent.
@@ -98,33 +180,78 @@ class stackHandlerCreateBrokerOrders(stackHandlerForFills):
             ## Do no further checks or resizing whatsoever!
             return original_contract_order
 
+        if self._contract_order_is_in_market_closed_backoff(original_contract_order):
+            return missing_order
+
         # CHECK FOR LOCKS
         data_locks = dataLocks(self.data)
         instrument_locked = data_locks.is_instrument_locked(
             original_contract_order.instrument_code
         )
 
-        data_broker = self.data_broker
-        market_closed = not (
-            data_broker.is_contract_okay_to_trade(
-                original_contract_order.futures_contract
-            )
-        )
-        if instrument_locked or market_closed:
-            # we don't log to avoid spamming in the automated stack handler,
-            # but a debug message helps diagnose manual submissions
+        if instrument_locked:
+            reason_msg = f"instrument {original_contract_order.instrument_code} locked"
             self.log.debug(
                 "Order %s not submitted: %s"
                 % (
                     str(original_contract_order),
-                    "instrument locked" if instrument_locked else "market closed",
+                    reason_msg,
                 ),
                 **original_contract_order.log_attributes(),
                 method="temp",
             )
             return missing_order
 
-        # RESIZE
+        market_closed, next_open, reliable_trading_hours = self._market_is_closed_for_contract_order(
+            original_contract_order
+        )
+
+        if market_closed:
+            if next_open is not None:
+                reason_msg = f"market for {original_contract_order.instrument_code} closed until {next_open}"
+            else:
+                reason_msg = f"market for {original_contract_order.instrument_code} closed"
+
+            if self.use_market_closed_order_backoff and reliable_trading_hours:
+                retry_time = self._set_market_closed_backoff_for_contract_order(
+                    original_contract_order, next_open
+                )
+                reason_msg += f"; backing off until {retry_time}"
+                self.log.debug(
+                    "Order %s not submitted: %s"
+                    % (
+                        str(original_contract_order),
+                        reason_msg,
+                    ),
+                    **original_contract_order.log_attributes(),
+                    method="temp",
+                )
+            elif self.use_market_closed_order_backoff:
+                self.log.debug(
+                    "Order %s not submitted: %s"
+                    % (
+                        str(original_contract_order),
+                        reason_msg,
+                    ),
+                    **original_contract_order.log_attributes(),
+                    method="temp",
+                )
+            else:
+                self.log.warning(
+                    "Order %s not submitted: %s"
+                    % (
+                        str(original_contract_order),
+                        reason_msg,
+                    ),
+                    **original_contract_order.log_attributes(),
+                    method="temp",
+                )
+
+            return missing_order
+
+        if self.use_market_closed_order_backoff:
+            self._clear_market_closed_backoff_for_contract_order(original_contract_order)
+
         contract_order_to_trade = self.size_contract_order(original_contract_order)
 
         return contract_order_to_trade

@@ -100,6 +100,17 @@ class listOfTradingHours(list):
                 return True
         return False
 
+    def next_opening_time(self) -> datetime.datetime | None:
+        datetime_now = datetime.datetime.now()
+        future_openings = [
+            check_period.opening_time
+            for check_period in self
+            if check_period.opening_time > datetime_now
+        ]
+        if len(future_openings) == 0:
+            return None
+        return min(future_openings)
+
     def less_than_N_hours_left(self, N_hours: float = 1.0):
         for check_period in self:
             if check_period.okay_to_trade_now():
