@@ -162,12 +162,12 @@ def _find_dates_when_label_changes(
         [original_data[label_column], new_data[label_column]], axis=1
     )
     joint_labels.columns = ["current", "new"]
-    joint_labels = joint_labels.sort_index()
+    joint_labels = joint_labels.sort_index().ffill()
 
     new_data_start = new_data.index[0]
 
-    existing_labels_in_new_period = joint_labels["current"][new_data_start:].ffill()
-    new_labels_in_new_period = joint_labels["new"][new_data_start:].ffill()
+    existing_labels_in_new_period = joint_labels["current"][new_data_start:]
+    new_labels_in_new_period = joint_labels["new"][new_data_start:]
 
     match_dates = _find_dates_when_labels_change_given_label_data(
         original_data=original_data,
@@ -397,10 +397,16 @@ def _get_merged_label_data(
     last_date_when_series_mismatch: Union[named_object, datetime.datetime],
     label_column="PRICE_CONTRACT",
 ) -> pd.Series:
-    label_series_in_new_data = new_data[last_date_when_series_mismatch:][label_column]
-    label_series_in_old_data = original_data[:first_date_after_series_mismatch][
-        label_column
-    ]
+    if last_date_when_series_mismatch is ORIGINAL_INDEX_MATCHES_NEW:
+        label_series_in_new_data = new_data[label_column]
+        label_series_in_old_data = original_data[label_column]
+    else:
+        label_series_in_new_data = new_data[last_date_when_series_mismatch:][
+            label_column
+        ]
+        label_series_in_old_data = original_data[:first_date_after_series_mismatch][
+            label_column
+        ]
     labels_in_merged_data_original_index = pd.concat(
         [label_series_in_old_data, label_series_in_new_data], axis=0
     )
