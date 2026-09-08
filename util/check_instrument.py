@@ -200,6 +200,7 @@ def _gap_check(
     label: str,
     today: pd.Timestamp,
     stale_warn_days: int = 5,
+    allow_missing_today: bool = False,
 ) -> CheckResult:
     """Standard gap + staleness check for any daily price series."""
     if series is None or series.dropna().empty:
@@ -218,7 +219,8 @@ def _gap_check(
         else None
     )
 
-    missing_count, gaps, ignored_market_closed = _business_day_gaps(clean, end=today)
+    gap_end = today - pd.Timedelta(days=1) if allow_missing_today else today
+    missing_count, gaps, ignored_market_closed = _business_day_gaps(clean, end=gap_end)
 
     status = PASS
     notes: List[str] = []
@@ -433,7 +435,7 @@ def check_fx_prices(
         except Exception:
             return CheckResult("FX prices", FAIL, f"no data for {fx_pair} or {inv_pair}")
 
-    return _gap_check(fx, f"FX prices ({fx_pair})", today)
+    return _gap_check(fx, f"FX prices ({fx_pair})", today, allow_missing_today=True)
 
 
 # ---------------------------------------------------------------------------
