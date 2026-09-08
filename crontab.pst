@@ -26,7 +26,7 @@ SHELL=/bin/sh
 # 07:05 - Morning FX and Contract Sampling Updates
 05 07 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_fx_and_contract_updates >> "$ECHO_PATH/run_daily_fx_and_contract_updates.txt" 2>&1'
 
-# 07:05 - Daily Historical Price Downloads
+# 07:05 - Daily Historical Price Downloads (calls updateHistoricalPrices; fetches raw historical price data, per individual futures contract, from external API)
 05 07 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_price_updates >> "$ECHO_PATH/run_daily_price_updates.txt" 2>&1'
 
 # 20:30 - System Backtest Updates (Generates position targets)
@@ -44,5 +44,8 @@ SHELL=/bin/sh
 # 21:30 - Status & Risk Reports Generation
 30 21 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_reports >> "$ECHO_PATH/run_reports.txt" 2>&1'
 
-# 23:00 - Multiple / Adjusted Prices Update
+# 23:00 - Multiple / Adjusted Prices Update (calls updateMultipleAdjustedPrices; works strictly on already-ingested database data to construct continuous price series across contract rolls)
 00 23 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_update_multiple_adjusted_prices >> "$ECHO_PATH/run_daily_update_multiple_adjusted_prices.txt" 2>&1'
+
+# 00:30 - Get barchart data
+30 00 * * *      cd /home/hdenman/algo-trading/bc-utils      && devenv shell -- sh -c 'python sample/pst.py  --download-method=headless-browser >> "$ECHO_PATH/barchart_downloads.txt" 2>&1'
