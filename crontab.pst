@@ -48,4 +48,4 @@ SHELL=/bin/sh
 00 23 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_update_multiple_adjusted_prices >> "$ECHO_PATH/run_daily_update_multiple_adjusted_prices.txt" 2>&1'
 
 # 00:30 - Get barchart data
-30 00 * * *      cd /home/hdenman/algo-trading/bc-utils      && devenv shell -- sh -c 'python sample/pst.py  --download-method=headless-browser >> "/home/hdenman/algo-trading/pysystemtrade-data/echo/barchart_downloads.txt" 2>&1'
+30 00 * * *      cd /home/hdenman/algo-trading/bc-utils      && devenv shell -- sh -c 'python sample/pst.py  --download-method=headless-browser >> "/home/hdenman/algo-trading/pysystemtrade-data/echos/barchart_downloads.txt" 2>&1'
