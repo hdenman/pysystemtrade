@@ -236,6 +236,12 @@ class singleContractDate(object):
 
         return current_year_int, current_month_str
 
+    @property
+    def contract_code(self) -> str:
+        lm = self.letter_month()
+        y = str(self.year())[-2:]
+        return f"{lm}{y}"
+
     def as_date(self):
         tuple_of_dates = self._as_date_tuple()
 
@@ -471,6 +477,13 @@ class contractDate(object):
 
     def letter_month(self):
         return self.first_contract_date.letter_month()
+    @property
+    def contract_code(self) -> str:
+        if self.is_spread_contract:
+            return "_".join(
+                [sc.contract_code for sc in self.list_of_single_contract_dates]
+            )
+        return self.first_contract_date.contract_code
 
     def __len__(self):
         return len(self.list_of_single_contract_dates)

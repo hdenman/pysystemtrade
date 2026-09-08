@@ -194,6 +194,9 @@ class futuresContract(object):
     @property
     def date_str(self):
         return self.contract_date.date_str
+    @property
+    def contract_code(self) -> str:
+        return self.contract_date.contract_code
 
     @property
     def date(self):

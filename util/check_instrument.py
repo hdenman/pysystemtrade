@@ -232,15 +232,15 @@ def _gap_check(
     if missing_count > 0:
         status = FAIL
         notes.append(f"{missing_count} missing business day(s)")
-        # Show up to 5 gap examples
-        for gs, ge in gaps[:5]:
+        # Show up to 5 gap examples (most recent first)
+        recent_gaps = list(reversed(gaps))
+        for gs, ge in recent_gaps[:5]:
             if gs == ge:
                 notes.append(f"  gap: {gs.date()}")
             else:
                 notes.append(f"  gap: {gs.date()} → {ge.date()}")
         if len(gaps) > 5:
             notes.append(f"  … ({len(gaps) - 5} more gaps)")
-
     detail = f"{n:,} obs  {first.date()} → {last.date()}"
     if ignored_market_closed:
         detail = f"{detail}; {ignored_market_closed} market-closed day(s) ignored"
