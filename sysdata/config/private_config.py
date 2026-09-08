@@ -12,11 +12,8 @@ PRIVATE_CONFIG_DIR_ENV_VAR = "PYSYS_PRIVATE_CONFIG_DIR"
 
 
 def get_private_config_as_dict(filename: str = arg_not_supplied) -> dict:
-    private_dir = get_private_config_dir()
-    if filename is arg_not_supplied:
-        filename = PRIVATE_CONFIG_FILE
+    private_path = get_private_config_path(filename=filename)
     try:
-        private_path = resolve_path_and_filename_for_package(private_dir, filename)
         with open(private_path) as file_to_parse:
             private_dict = yaml.load(file_to_parse, Loader=yaml.FullLoader)
         return private_dict
@@ -36,3 +33,10 @@ def get_private_config_dir():
         private_config_dir = Path(DEFAULT_PRIVATE_DIR)
 
     return str(private_config_dir)
+
+
+def get_private_config_path(filename: str = arg_not_supplied) -> str:
+    private_dir = get_private_config_dir()
+    if filename is arg_not_supplied:
+        filename = PRIVATE_CONFIG_FILE
+    return resolve_path_and_filename_for_package(private_dir, filename)

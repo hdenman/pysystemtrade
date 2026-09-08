@@ -8,6 +8,8 @@ from typing import List
 import pandas as pd
 
 from sysdata.config.production_config import get_production_config
+from sysdata.config.private_config import get_private_config_path
+from syslogging.logger import get_logger
 
 
 def send_mail_file(textfile: str, subject: str):
@@ -103,17 +105,21 @@ def _send_msg(msg: MIMEMultipart):
 
 def get_email_details():
     # FIXME DON'T LIKE RETURNING ALL THESE VALUES - return CONFIG or subset?
-    try:
-        production_config = get_production_config()
-        email_address = production_config.email_address
-        email_pwd = production_config.email_pwd
-        email_server = production_config.email_server
-        email_to = production_config.email_to
-        email_port = production_config.email_port
-    except:
+    production_config = get_production_config()
+    required_keys = ["email_address", "email_pwd", "email_server", "email_to", "email_port"]
+    missing_keys = [key for key in required_keys if not hasattr(production_config, key)]
+    if missing_keys:
+        private_config_path = get_private_config_path()
+        log = get_logger("emailing")
+        log.error(f"Private config path used: {private_config_path}")
         raise Exception(
-            "Need to have all of these for email to work in private config: email_address, email_pwd, email_server, email_to",
-            "email_port",
+            f"Need to have all of these for email to work in private config ({private_config_path}): {', '.join(required_keys)}. Missing: {', '.join(missing_keys)}"
         )
+
+    email_address = production_config.email_address
+    email_pwd = production_config.email_pwd
+    email_server = production_config.email_server
+    email_to = production_config.email_to
+    email_port = production_config.email_port
 
     return email_server, email_address, email_pwd, email_to, email_port
