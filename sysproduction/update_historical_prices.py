@@ -418,10 +418,17 @@ def get_and_add_prices_for_frequency(
     if error_or_rows_added is failure:
         return failure
 
-    data.log.debug(
-        "Added %d rows at frequency %s for %s"
-        % (error_or_rows_added, frequency, str(contract_object))
-    )
+    if len(new_prices_checked) > 0:
+        latest_timestamp = str(new_prices_checked.index[-1])
+        data.log.debug(
+            "Added %d rows at frequency %s for %s -- most recent price %s"
+            % (error_or_rows_added, frequency, str(contract_object), latest_timestamp)
+        )
+    else:
+        data.log.debug(
+            "Added %d rows at frequency %s for %s"
+            % (error_or_rows_added, frequency, str(contract_object))
+        )
     return success
 
 

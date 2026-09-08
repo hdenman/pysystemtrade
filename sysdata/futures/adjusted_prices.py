@@ -89,10 +89,18 @@ class futuresAdjustedPricesData(baseData):
             instrument_code, adjusted_price_data
         )
 
-        self.log.info(
-            "Added data for instrument %s" % instrument_code,
-            instrument_code=instrument_code,
-        )
+        if len(adjusted_price_data) > 0:
+            latest_timestamp = str(adjusted_price_data.index[-1])
+            self.log.info(
+                "Added data for instrument %s -- most recent price %s"
+                % (instrument_code, latest_timestamp),
+                instrument_code=instrument_code,
+            )
+        else:
+            self.log.info(
+                "Added data for instrument %s" % instrument_code,
+                instrument_code=instrument_code,
+            )
 
     def _add_adjusted_prices_without_checking_for_existing_entry(
         self, instrument_code: str, adjusted_price_data: futuresAdjustedPrices

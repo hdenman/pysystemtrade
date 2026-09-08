@@ -101,7 +101,15 @@ class futuresMultiplePricesData(baseData):
             instrument_code, multiple_price_data
         )
 
-        self.log.info("Added data for instrument %s" % instrument_code, **log_attrs)
+        if len(multiple_price_data) > 0:
+            latest_timestamp = str(multiple_price_data.index[-1])
+            self.log.info(
+                "Added data for instrument %s -- most recent price %s"
+                % (instrument_code, latest_timestamp),
+                **log_attrs,
+            )
+        else:
+            self.log.info("Added data for instrument %s" % instrument_code, **log_attrs)
 
     def _add_multiple_prices_without_checking_for_existing_entry(
         self, instrument_code: str, multiple_price_data: futuresMultiplePrices
