@@ -108,6 +108,8 @@ class ibClient(object):
         self,
         ib_contract_pattern: ibContract,
     ) -> IBInstrumentIdentity:
+        if getattr(ib_contract_pattern, "secType", None) == "BAG":
+            raise missingContract
         contract_details = self.get_contract_details(
             ib_contract_pattern=ib_contract_pattern,
             allow_expired=False,

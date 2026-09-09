@@ -206,11 +206,18 @@ class ibExecutionStackData(brokerExecutionStackData):
         """
         try:
             try:
-                ib_contract = (
-                    trade_with_contract_from_ib.ibcontract_with_legs.ibcontract
+                ibcontract_with_legs = (
+                    trade_with_contract_from_ib.ibcontract_with_legs
                 )
+                ib_contract = ibcontract_with_legs.ibcontract
+                if getattr(ib_contract, "secType", None) == "BAG":
+                    if len(ibcontract_with_legs.legs) == 0:
+                        raise ibOrderCouldntCreateException()
+                    instrument_lookup_contract = ibcontract_with_legs.legs[0]
+                else:
+                    instrument_lookup_contract = ib_contract
                 instrument_code = self.futures_instrument_data.get_instrument_code_from_broker_contract_object(
-                    ib_contract
+                    instrument_lookup_contract
                 )
             except:
                 raise ibOrderCouldntCreateException()
