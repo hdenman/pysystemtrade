@@ -18,7 +18,7 @@ SHELL=/bin/sh
 # ==============================================================================
 
 # 00:15 - Order Stack Handler (Runs all trading day)
-15 00 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_stack_handler >> "$ECHO_PATH/run_stack_handler.txt" 2>&1'
+15 00 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_stack_handler >> "$ECHO_PATH/run_stack_handler.$(date -I).txt" 2>&1'
 
 # 00:45 - Capital Update Process
 45 00 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_capital_update >> "$ECHO_PATH/run_capital_update.txt" 2>&1'
@@ -47,5 +47,5 @@ SHELL=/bin/sh
 # 23:00 - Multiple / Adjusted Prices Update (calls updateMultipleAdjustedPrices; works strictly on already-ingested database data to construct continuous price series across contract rolls)
 00 23 * * 1-5    cd /home/hdenman/algo-trading/pysystemtrade && devenv shell -- sh -c 'python -m sysproduction.run_daily_update_multiple_adjusted_prices >> "$ECHO_PATH/run_daily_update_multiple_adjusted_prices.txt" 2>&1'
 
-# 00:30 - Get barchart data
-30 00 * * *      cd /home/hdenman/algo-trading/bc-utils      && devenv shell -- sh -c 'python sample/pst.py  --download-method=headless-browser >> "/home/hdenman/algo-trading/pysystemtrade-data/echos/barchart_downloads.txt" 2>&1'
+# 16:30 - Get barchart data
+30 16 * * *      cd /home/hdenman/algo-trading/bc-utils      && devenv shell -- sh -c 'python sample/pst.py  --download-method=headless-browser >> "/home/hdenman/algo-trading/pysystemtrade-data/echos/barchart_downloads.$(date -I).txt" 2>&1'
