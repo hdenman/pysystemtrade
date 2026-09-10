@@ -13,7 +13,7 @@ process_configuration_start_time:
 process_configuration_stop_time:
   default: '23:50'
   run_strategy_order_generator: '23:50'
-  run_stack_handler: '23:00' # '19:45'
+  run_stack_handler: '19:45'  # Must shut down before strategy_order_generator etc. start up.
   run_capital_update: '19:50'
   run_daily_prices_updates: '23:50'
   run_daily_fx_and_contract_updates: '23:50'
