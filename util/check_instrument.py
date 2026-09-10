@@ -83,9 +83,11 @@ def _status_str(status: str) -> str:
 # ---------------------------------------------------------------------------
 
 # Hard-coded known exchange closures which are acceptable missing observations.
-# This list covers the historical EUROSTX/STOXX futures data shipped/used here:
-# New Year's Day, Good Friday, Easter Monday, May Day, Christmas Eve, Christmas
-# Day, Boxing Day, New Year's Eve, plus the two observed Whit Monday closures.
+# The base list covers the historical EUROSTX/STOXX futures data shipped/used
+# here: New Year's Day, Good Friday, Easter Monday, May Day, Christmas Eve,
+# Christmas Day, Boxing Day, New Year's Eve, plus two observed Whit Monday
+# closures.  Additional dates below are known acceptable gaps observed in other
+# production price series.
 MARKET_CLOSED_DAYS = (
     "1999-01-01", "1999-04-02", "1999-04-05", "1999-12-24", "1999-12-31", "2000-04-21",
     "2000-04-24", "2000-05-01", "2000-12-25", "2000-12-26", "2001-01-01", "2001-04-13",
@@ -118,7 +120,20 @@ MARKET_CLOSED_DAYS = (
     "2025-12-25", "2025-12-26", "2025-12-31", "2026-01-01", "2026-04-03", "2026-04-06",
     "2026-05-01", "2026-12-24", "2026-12-25", "2026-12-31",
 )
-_MARKET_CLOSED_DAY_INDEX = pd.DatetimeIndex(MARKET_CLOSED_DAYS)
+
+ADDITIONAL_MARKET_CLOSED_DAYS = (
+    # New Year's Day observed when Jan 1 falls on a Sunday.
+    "2006-01-02",
+    "2012-01-02",
+    "2017-01-02",
+    "2023-01-02",
+    # Known two-day November closure/gap in 2017 price histories.
+    "2017-11-16",
+    "2017-11-17",
+)
+_MARKET_CLOSED_DAY_INDEX = pd.DatetimeIndex(
+    MARKET_CLOSED_DAYS + ADDITIONAL_MARKET_CLOSED_DAYS
+)
 
 # ---------------------------------------------------------------------------
 # Gap detection
