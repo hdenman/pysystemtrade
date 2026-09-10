@@ -1,31 +1,66 @@
+import errno
 import time
 import datetime
+from typing import Iterator
 from syscontrol.run_process import processToRun
 from sysexecution.stack_handler.stack_handler import stackHandler
 from sysdata.data_blob import dataBlob
 from sysbrokers.broker_factory import get_broker_class_list
 from syscore.objects import get_class_name
+from syscore.constants import arg_not_supplied
 
 MAX_IB_RETRY_SECONDS = 15 * 60  # 15 minutes
 INITIAL_BACKOFF_SECONDS = 1.0
 MAX_BACKOFF_SECONDS = 60.0
 
+IB_RETRYABLE_ERRNOS = {
+    errno.ECONNRESET,
+    errno.ECONNABORTED,
+    errno.EPIPE,
+    errno.ETIMEDOUT,
+}
+
+IB_RETRYABLE_MESSAGE_FRAGMENTS = (
+    "socket disconnect",
+    "peer closed connection",
+    "api connection failed",
+    "connection timed out",
+    "timed out",
+    "timeouterror",
+)
+
+
+def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    seen = set()
+    curr = exc
+    while curr is not None and id(curr) not in seen:
+        seen.add(id(curr))
+        yield curr
+        if curr.__cause__ is not None and id(curr.__cause__) not in seen:
+            curr = curr.__cause__
+        elif curr.__context__ is not None and id(curr.__context__) not in seen:
+            curr = curr.__context__
+        else:
+            break
+
 
 def is_ib_disconnect_exception(exc: BaseException) -> bool:
-    if isinstance(exc, ConnectionError):
-        return True
-    msg = str(exc).lower()
-    if "socket disconnect" in msg or "peer closed connection" in msg:
-        return True
+    for chained_exc in _iter_exception_chain(exc):
+        if isinstance(chained_exc, (ConnectionError, TimeoutError)):
+            return True
+        if isinstance(chained_exc, OSError) and chained_exc.errno in IB_RETRYABLE_ERRNOS:
+            return True
+        msg = str(chained_exc).lower()
+        if any(frag in msg for frag in IB_RETRYABLE_MESSAGE_FRAGMENTS):
+            return True
     return False
-
 
 def reset_ib_data_blob_and_handler_state(stack_handler_obj: stackHandler):
     data = stack_handler_obj.data
     log = data.log
 
     try:
-        if getattr(data, "_ib_conn", None) is not None and data._ib_conn != getattr(data, "arg_not_supplied", None):
+        if getattr(data, "_ib_conn", arg_not_supplied) not in (None, arg_not_supplied):
             ib_conn = data._ib_conn
             try:
                 ib_conn.close_connection()
@@ -38,7 +73,7 @@ def reset_ib_data_blob_and_handler_state(stack_handler_obj: stackHandler):
     except Exception as e:
         log.warning(f"Error handling ib_conn during reset: {e}")
 
-    data._ib_conn = getattr(data, "arg_not_supplied", None)
+    data._ib_conn = arg_not_supplied
 
     try:
         broker_class_list = get_broker_class_list(data)
