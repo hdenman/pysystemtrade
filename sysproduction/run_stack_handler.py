@@ -27,6 +27,8 @@ IB_RETRYABLE_MESSAGE_FRAGMENTS = (
     "connection timed out",
     "timed out",
     "timeouterror",
+    "not connected",
+    "connectivity between ibkr and trader workstation has been lost",
 )
 
 
@@ -55,13 +57,40 @@ def is_ib_disconnect_exception(exc: BaseException) -> bool:
             return True
     return False
 
+
+def _get_existing_ib_connection(data):
+    ib_conn = getattr(data, "_ib_conn", arg_not_supplied)
+    if ib_conn in (None, arg_not_supplied):
+        return arg_not_supplied
+    return ib_conn
+
+
+def raise_if_known_ib_connection_problem(data):
+    ib_conn = _get_existing_ib_connection(data)
+    if ib_conn is arg_not_supplied:
+        return None
+
+    has_active_connection_problem = getattr(
+        ib_conn, "has_active_connection_problem", None
+    )
+    if has_active_connection_problem is None or has_active_connection_problem() is not True:
+        return None
+
+    connection_problem_description = getattr(
+        ib_conn, "connection_problem_description", None
+    )
+    if connection_problem_description is None:
+        raise ConnectionError("IB connection is not healthy")
+
+    raise ConnectionError(connection_problem_description())
+
+
 def reset_ib_data_blob_and_handler_state(stack_handler_obj: stackHandler):
     data = stack_handler_obj.data
     log = data.log
-
     try:
-        if getattr(data, "_ib_conn", arg_not_supplied) not in (None, arg_not_supplied):
-            ib_conn = data._ib_conn
+        ib_conn = _get_existing_ib_connection(data)
+        if ib_conn is not arg_not_supplied:
             try:
                 ib_conn.close_connection()
             except Exception as e:
@@ -125,17 +154,19 @@ class RobustIBStackHandler:
         attr = getattr(self.stack_handler, name)
         if callable(attr):
             def wrapped(*args, **kwargs):
-                return self._run_with_ib_retry(name, attr, *args, **kwargs)
+                return self._run_with_ib_retry(name, *args, **kwargs)
             return wrapped
         return attr
 
-    def _run_with_ib_retry(self, method_name: str, method_callable, *args, **kwargs):
+    def _run_with_ib_retry(self, method_name: str, *args, **kwargs):
         start_time = self._time_fn()
         backoff = INITIAL_BACKOFF_SECONDS
         attempt = 1
 
         while True:
             try:
+                raise_if_known_ib_connection_problem(self.data)
+                method_callable = getattr(self.stack_handler, method_name)
                 return method_callable(*args, **kwargs)
             except Exception as exc:
                 if not is_ib_disconnect_exception(exc):
@@ -144,11 +175,13 @@ class RobustIBStackHandler:
                 elapsed = self._time_fn() - start_time
                 if elapsed >= self._max_retry_seconds:
                     msg = (
-                        f"run_stack_handler method '{method_name}' stuck retrying after "
-                        f"IB disconnect for {elapsed:.1f}s (exceeded limit of {self._max_retry_seconds}s). Crashing!"
+                        f"run_stack_handler method '{method_name}' still has an IB disconnect after "
+                        f"{elapsed:.1f}s (retry window {self._max_retry_seconds}s). "
+                        "Skipping this run; the scheduler will retry on the next cycle."
                     )
                     self.data.log.critical(msg)
-                    raise
+                    reset_ib_data_blob_and_handler_state(self.stack_handler)
+                    return None
 
                 next_backoff = min(backoff, MAX_BACKOFF_SECONDS)
                 if elapsed + next_backoff > self._max_retry_seconds:

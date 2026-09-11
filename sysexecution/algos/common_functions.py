@@ -12,6 +12,27 @@ MESSAGING_FREQUENCY = 30
 CANCEL_WAIT_TIME = 60
 
 
+
+def raise_if_active_broker_connection_problem(data: dataBlob):
+    ib_conn = getattr(data, "_ib_conn", None)
+    if ib_conn is None:
+        return None
+
+    has_active_connection_problem = getattr(
+        ib_conn, "has_active_connection_problem", None
+    )
+    if has_active_connection_problem is None or has_active_connection_problem() is not True:
+        return None
+
+    connection_problem_description = getattr(
+        ib_conn, "connection_problem_description", None
+    )
+    if connection_problem_description is None:
+        raise ConnectionError("Broker connection is not healthy")
+
+    raise ConnectionError(connection_problem_description())
+
+
 def post_trade_processing(
     data: dataBlob, broker_order_with_controls: orderWithControls
 ) -> orderWithControls:
@@ -42,6 +63,7 @@ def cancel_order(
     not_cancelled = True
     while not_cancelled:
         time.sleep(0.001)
+        raise_if_active_broker_connection_problem(data)
         is_cancelled = data_broker.check_order_is_cancelled_given_control_object(
             broker_order_with_controls
         )

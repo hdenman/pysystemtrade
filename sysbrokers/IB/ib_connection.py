@@ -16,6 +16,12 @@ from syslogging.logger import *
 from sysdata.config.production_config import get_production_config
 
 
+IB_ERROR_CONNECTIVITY_LOST = 1100
+IB_ERROR_CONNECTIVITY_RESTORED = {1101, 1102}
+IB_REQUEST_TIMEOUT_SECONDS = 15 * 60
+
+
+
 class connectionIB(object):
     """
     Connection object for connecting IB
@@ -58,6 +64,8 @@ class connectionIB(object):
                 CLIENTID_LOG_LABEL: client_id,
             },
         )
+        self._ib_server_connected = True
+
 
         # You can pass a client id yourself, or let IB find one
 
@@ -78,6 +86,8 @@ class connectionIB(object):
         self, ipaddress: str, port: int, client_id: int, account=arg_not_supplied
     ):
         ib = IB()
+        ib.RequestTimeout = IB_REQUEST_TIMEOUT_SECONDS
+        ib.errorEvent += self._handle_ib_error_event
 
         try:
             if account is arg_not_supplied:
@@ -97,6 +107,29 @@ class connectionIB(object):
 
         self._ib = ib
         self._account = account
+        self._ib_server_connected = True
+
+    def _handle_ib_error_event(self, req_id, error_code, error_string, contract):
+        if error_code == IB_ERROR_CONNECTIVITY_LOST:
+            self._ib_server_connected = False
+        elif error_code in IB_ERROR_CONNECTIVITY_RESTORED:
+            self._ib_server_connected = True
+
+    def has_active_connection_problem(self) -> bool:
+        return not self.ib.isConnected() or not self._ib_server_connected
+
+    def connection_problem_description(self) -> str:
+        if not self.ib.isConnected():
+            return "IB API socket is disconnected"
+        if not self._ib_server_connected:
+            return "IBKR connectivity from Trader Workstation/Gateway is lost"
+        return "IB connection is healthy"
+
+    def remove_event_handlers(self):
+        try:
+            self.ib.errorEvent -= self._handle_ib_error_event
+        except Exception:
+            pass
 
     @property
     def ib(self):
@@ -119,13 +152,13 @@ class connectionIB(object):
     def close_connection(self):
         self.log.debug("Terminating %s" % str(self._ib_connection_config))
         try:
+            self.remove_event_handlers()
             # Try and disconnect IB client
             self.ib.disconnect()
         except BaseException:
             self.log.warning(
                 "Trying to disconnect IB client failed... ensure process is killed"
             )
-
 
 def get_broker_account() -> str:
     production_config = get_production_config()

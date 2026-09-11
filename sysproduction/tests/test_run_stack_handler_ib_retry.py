@@ -4,9 +4,17 @@ from unittest.mock import MagicMock, patch
 import time
 from types import SimpleNamespace
 
+from sysexecution.algos.common_functions import raise_if_active_broker_connection_problem
+from sysbrokers.IB.ib_connection import (
+    IB_ERROR_CONNECTIVITY_LOST,
+    IB_ERROR_CONNECTIVITY_RESTORED,
+    IB_REQUEST_TIMEOUT_SECONDS,
+    connectionIB,
+)
 from sysproduction.run_stack_handler import (
     RobustIBStackHandler,
     is_ib_disconnect_exception,
+    raise_if_known_ib_connection_problem,
     reset_ib_data_blob_and_handler_state,
 )
 from syscore.constants import arg_not_supplied
@@ -39,6 +47,85 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         )
         self.assertFalse(is_ib_disconnect_exception(ValueError("Invalid value")))
         self.assertFalse(is_ib_disconnect_exception(KeyError("missing_key")))
+
+    def test_ib_error_1100_marks_connection_unhealthy_until_restored(self):
+        conn = object.__new__(connectionIB)
+        conn._ib = SimpleNamespace(isConnected=MagicMock(return_value=True))
+        conn._ib_server_connected = True
+
+        conn._handle_ib_error_event(
+            -1,
+            IB_ERROR_CONNECTIVITY_LOST,
+            "Connectivity between IBKR and Trader Workstation has been lost.",
+            None,
+        )
+        self.assertTrue(conn.has_active_connection_problem())
+        self.assertIn("IBKR connectivity", conn.connection_problem_description())
+
+        conn._handle_ib_error_event(
+            -1,
+            next(iter(IB_ERROR_CONNECTIVITY_RESTORED)),
+            "Connectivity between IBKR and Trader Workstation has been restored.",
+            None,
+        )
+        self.assertFalse(conn.has_active_connection_problem())
+
+    def test_ib_connection_sets_blocking_request_timeout(self):
+        conn = object.__new__(connectionIB)
+        ib = MagicMock()
+
+        with patch("sysbrokers.IB.ib_connection.IB", return_value=ib):
+            with patch("sysbrokers.IB.ib_connection.time.sleep"):
+                conn._init_connection("127.0.0.1", 4001, 1, account="DU123")
+
+        self.assertEqual(ib.RequestTimeout, IB_REQUEST_TIMEOUT_SECONDS)
+        ib.connect.assert_called_once_with(
+            "127.0.0.1", 4001, clientId=1, account="DU123"
+        )
+
+    def test_existing_unhealthy_ib_connection_is_reconnected_before_method(self):
+        mock_stack_handler = MagicMock()
+        ib_conn = MagicMock()
+        ib_conn.has_active_connection_problem.return_value = True
+        ib_conn.connection_problem_description.return_value = "IBKR connectivity from Trader Workstation/Gateway is lost"
+        mock_stack_handler.data._ib_conn = ib_conn
+        mock_stack_handler.data.log = MagicMock()
+        mock_stack_handler.check_external_position_break.return_value = "success"
+
+        times = [0.0, 1.0, 2.0]
+        def fake_time():
+            return times.pop(0) if times else 3.0
+
+        robust = RobustIBStackHandler(
+            mock_stack_handler,
+            max_retry_seconds=900,
+            time_fn=fake_time,
+            sleep_fn=MagicMock(),
+        )
+
+        with patch("sysproduction.run_stack_handler.reset_ib_data_blob_and_handler_state") as mock_reset:
+            mock_reset.side_effect = lambda stack_handler: setattr(
+                stack_handler.data, "_ib_conn", arg_not_supplied
+            )
+            result = robust.check_external_position_break()
+
+        self.assertEqual(result, "success")
+        mock_reset.assert_called_once_with(mock_stack_handler)
+
+    def test_connection_problem_checks_ignore_no_connection(self):
+        data = SimpleNamespace(_ib_conn=arg_not_supplied)
+        self.assertIsNone(raise_if_known_ib_connection_problem(data))
+        self.assertIsNone(raise_if_active_broker_connection_problem(data))
+
+    def test_algo_loop_health_check_raises_for_unhealthy_connection(self):
+        ib_conn = MagicMock()
+        ib_conn.has_active_connection_problem.return_value = True
+        ib_conn.connection_problem_description.return_value = "IB API socket is disconnected"
+        data = SimpleNamespace(_ib_conn=ib_conn)
+
+        with self.assertRaises(ConnectionError):
+            raise_if_active_broker_connection_problem(data)
+
     def test_successful_execution_no_retry(self):
         mock_stack_handler = MagicMock()
         mock_stack_handler.data.log = MagicMock()
@@ -211,7 +298,7 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         self.assertEqual(mock_stack_handler.check_external_position_break.call_count, 1)
         mock_reset.assert_not_called()
 
-    def test_stuck_for_15min_logs_critical_and_raises(self):
+    def test_stuck_for_15min_logs_critical_and_skips_run(self):
         mock_stack_handler = MagicMock()
         mock_stack_handler.data.log = MagicMock()
         mock_stack_handler.check_external_position_break.side_effect = ConnectionError("Socket disconnect")
@@ -228,13 +315,14 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         )
 
         with patch("sysproduction.run_stack_handler.reset_ib_data_blob_and_handler_state"):
-            with self.assertRaises(ConnectionError):
-                robust.check_external_position_break()
+            result = robust.check_external_position_break()
 
+        self.assertIsNone(result)
         self.assertTrue(mock_stack_handler.data.log.critical.called)
         critical_msg = mock_stack_handler.data.log.critical.call_args[0][0]
         self.assertIn("check_external_position_break", critical_msg)
-        self.assertIn("exceeded limit of 900", critical_msg)
+        self.assertIn("retry window 900", critical_msg)
+        self.assertIn("Skipping this run", critical_msg)
 
 
 if __name__ == "__main__":

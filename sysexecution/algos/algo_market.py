@@ -1,18 +1,14 @@
-"""
-Simplest possible execution method, one market order
-"""
 from copy import copy
-import time
 from sysexecution.orders.named_order_objects import missing_order
-
 from sysexecution.algos.algo import Algo
+from sysexecution.orders.broker_orders import market_order_type, brokerOrderType
 from sysexecution.algos.common_functions import (
-    post_trade_processing,
     MESSAGING_FREQUENCY,
     cancel_order,
+    post_trade_processing,
+    raise_if_active_broker_connection_problem,
 )
 from sysexecution.order_stacks.broker_order_stack import orderWithControls
-from sysexecution.orders.broker_orders import market_order_type, brokerOrderType
 
 
 class algoMarket(Algo):
@@ -95,6 +91,7 @@ class algoMarket(Algo):
         )
         while trade_open:
             time.sleep(0.001)
+            raise_if_active_broker_connection_problem(self.data)
             log_message_required = broker_order_with_controls.message_required(
                 messaging_frequency_seconds=MESSAGING_FREQUENCY
             )

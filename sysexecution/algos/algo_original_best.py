@@ -5,17 +5,13 @@ This is the original 'best execution' algo I used in my legacy system
 import time
 from syscore.exceptions import missingData, marketClosed, orderCannotBeModified
 from sysexecution.orders.named_order_objects import missing_order
-
-from sysexecution.algos.algo import (
-    Algo,
-    limit_price_from_offside_price,
-)
 from sysexecution.algos.common_functions import (
-    post_trade_processing,
-    MESSAGING_FREQUENCY,
-    cancel_order,
-    check_current_limit_price_at_inside_spread,
     limit_price_is_at_inside_spread,
+    cancel_order,
+    post_trade_processing,
+    check_current_limit_price_at_inside_spread,
+    MESSAGING_FREQUENCY,
+    raise_if_active_broker_connection_problem,
 )
 from sysexecution.tick_data import tickerObject, analysisTick
 from sysexecution.order_stacks.broker_order_stack import orderWithControls
@@ -161,6 +157,7 @@ class algoOriginalBest(Algo):
 
         while trade_open:
             time.sleep(0.001)
+            raise_if_active_broker_connection_problem(data)
             if order_control.message_required(
                 messaging_frequency_seconds=MESSAGING_FREQUENCY
             ):
