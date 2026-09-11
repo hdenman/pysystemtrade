@@ -38,6 +38,9 @@ Recommended filesystem layout:
 
 ```text
 /srv/pysystemtrade/
+  code/
+    pysystemtrade/                    # single shared code checkout
+
   shared-parquet/
     futures_contract_prices/
     futures_multiple_prices/
@@ -46,8 +49,7 @@ Recommended filesystem layout:
     spreads/                         # optional shared market data
 
   paper/
-    pysystemtrade/                    # code checkout
-    pysystemtrade_config/             # private config repo/copy
+    pysystemtrade_config/             # paper private config repo/copy
     parquet/
       futures_contract_prices -> ../../shared-parquet/futures_contract_prices
       futures_multiple_prices -> ../../shared-parquet/futures_multiple_prices
@@ -64,8 +66,7 @@ Recommended filesystem layout:
     ibgateway/                       # paper Gateway/IBC runtime/config
 
   live/
-    pysystemtrade/                    # code checkout
-    pysystemtrade_config/             # private config repo/copy
+    pysystemtrade_config/             # live private config repo/copy
     parquet/
       futures_contract_prices -> ../../shared-parquet/futures_contract_prices
       futures_multiple_prices -> ../../shared-parquet/futures_multiple_prices
@@ -83,6 +84,8 @@ Recommended filesystem layout:
 ```
 
 Alternative: make `pst-live` write directly to `/srv/pysystemtrade/live/parquet` and symlink only the paper market-data directories to live. The explicit `shared-parquet` directory is clearer because it separates shared data from live trading state.
+
+The code checkout is intentionally shared at `/srv/pysystemtrade/code/pysystemtrade`. Keep per-system config, state, logs, Gateway runtime files, and writable Parquet trees outside the shared code directory. Production users should not need write access to the shared code tree.
 
 ## Users and groups
 
@@ -119,7 +122,11 @@ sudo setfacl -R -d -m u:pst-live:rwx,u:pst-paper:rx,g:pst-data:rx /srv/pysystemt
 On NixOS, prefer declarative users/groups in `/etc/nixos/configuration.nix` or your flake module. Equivalent shape:
 
 ```nix
-users.groups.pst-data = {};
+users.groups = {
+  pst-data = { };
+  pst-paper = { };
+  pst-live = { };
+};
 
 users.users.pst-paper = {
   isSystemUser = true;
@@ -138,6 +145,14 @@ users.users.pst-live = {
   extraGroups = [ "pst-data" ];
   shell = pkgs.bashInteractive;
 };
+
+systemd.tmpfiles.rules = [
+  "d /srv/pysystemtrade 0755 root root -"
+  "d /srv/pysystemtrade/code 0755 hdenman users -"
+  "d /srv/pysystemtrade/shared-parquet 2775 pst-live pst-data -"
+  "d /srv/pysystemtrade/paper 0755 pst-paper pst-paper -"
+  "d /srv/pysystemtrade/live 0755 pst-live pst-live -"
+];
 ```
 
 Then apply with:
@@ -172,7 +187,7 @@ If using the supplied crontab only, preserve it first and remove it only after t
 
 ### 2. Backup before moving anything
 
-Create cold backups of code, config, Mongo, and Parquet.
+Create cold backups of code, config, Mongo, and Parquet before changing ownership or layout.
 
 ```bash
 sudo mkdir -p /srv/pysystemtrade/backups/pre-split
@@ -189,28 +204,22 @@ sudo -u hdenman mongodump --out /srv/pysystemtrade/backups/pre-split/mongodump
 
 Do not delete the original `hdenman` tree until both paper and live have run successfully for several days.
 
-### 3. Copy existing code and private config to `pst-paper`
+### 3. Install shared code and copy private config to `pst-paper`
+
+Use one shared code checkout for both paper and live:
 
 ```bash
-sudo mkdir -p /srv/pysystemtrade/paper
-sudo rsync -aH /home/hdenman/algo-trading/pysystemtrade/ /srv/pysystemtrade/paper/pysystemtrade/
+sudo mkdir -p /srv/pysystemtrade/code /srv/pysystemtrade/paper
+sudo rsync -aH /home/hdenman/algo-trading/pysystemtrade/ /srv/pysystemtrade/code/pysystemtrade/
 sudo rsync -aH /home/hdenman/algo-trading/pysystemtrade_config/ /srv/pysystemtrade/paper/pysystemtrade_config/
+sudo chown -R hdenman:users /srv/pysystemtrade/code
+sudo chmod -R a+rX /srv/pysystemtrade/code
 sudo chown -R pst-paper:pst-paper /srv/pysystemtrade/paper
 ```
 
-If the current system uses symlinks in `private/`, recreate them under the new user rather than copying absolute links blindly.
+Do not create a shared `/srv/pysystemtrade/code/pysystemtrade/private` symlink. A single symlink there cannot point to both paper and live private config.
 
-Recommended convention:
-
-```text
-/srv/pysystemtrade/paper/pysystemtrade/private -> /srv/pysystemtrade/paper/pysystemtrade_config/private
-```
-
-Create or fix the link:
-
-```bash
-sudo -u pst-paper ln -sfn /srv/pysystemtrade/paper/pysystemtrade_config/private /srv/pysystemtrade/paper/pysystemtrade/private
-```
+Instead, make each user's environment resolve private config explicitly. If your setup imports modules from `private`, put that per-user private directory on `PYTHONPATH` or use wrapper scripts that activate the correct config path before running shared code. The invariant is: shared source is common; private config is per-user.
 
 ### 4. Move/copy current Parquet data
 
@@ -287,15 +296,16 @@ Use a high `ib_idoffset` for paper to avoid client ID collisions with live.
 Keep paper logs/echos/backtest state under paper-owned directories. Ensure `~pst-paper/.profile` exports paths for the paper instance:
 
 ```bash
-export PYSYSTEMTRADE_HOME=/srv/pysystemtrade/paper/pysystemtrade
-export SCRIPT_PATH=/srv/pysystemtrade/paper/pysystemtrade/sysproduction/linux/scripts
+export PYSYSTEMTRADE_HOME=/srv/pysystemtrade/code/pysystemtrade
+export SCRIPT_PATH=/srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/scripts
 export ECHO_PATH=/srv/pysystemtrade/paper/echoes
 export MONGO_DATA=/srv/pysystemtrade/mongo-data
 export PARQUET_DATA=/srv/pysystemtrade/paper/parquet
+export PYTHONPATH=/srv/pysystemtrade/paper/pysystemtrade_config:${PYTHONPATH:-}
 cd "$PYSYSTEMTRADE_HOME"
 ```
 
-If your setup uses different variables, keep those; the invariant is that `pst-paper` must resolve config, scripts, echos, and Parquet to the paper tree.
+If your setup uses different variables, keep those; the invariant is that `pst-paper` must resolve config, scripts, echos, and Parquet to the paper tree while resolving source code from `/srv/pysystemtrade/code/pysystemtrade`.
 
 ### 7. Configure paper IB Gateway systemd unit
 
@@ -349,22 +359,20 @@ At this point, install paper cron without shared market-data writers. See Phase 
 ### 1. Create live directories
 
 ```bash
-sudo mkdir -p /srv/pysystemtrade/live/{pysystemtrade,pysystemtrade_config,parquet,echoes,logs,backtest_states,ibgateway}
+sudo mkdir -p /srv/pysystemtrade/live/{pysystemtrade_config,parquet,echoes,logs,backtest_states,ibgateway}
 sudo chown -R pst-live:pst-live /srv/pysystemtrade/live
 ```
 
-### 2. Install code for live
+### 2. Copy private config for live
 
-Use the same commit as paper initially. Do not let live and paper drift during the migration.
+Live uses the shared code checkout at `/srv/pysystemtrade/code/pysystemtrade`. Do not create `/srv/pysystemtrade/live/pysystemtrade`.
+
+Copy only the private config as the starting point, then edit it for live account, live Mongo DB, live Parquet path, and live IB settings:
 
 ```bash
-sudo rsync -aH /srv/pysystemtrade/paper/pysystemtrade/ /srv/pysystemtrade/live/pysystemtrade/
 sudo rsync -aH /srv/pysystemtrade/paper/pysystemtrade_config/ /srv/pysystemtrade/live/pysystemtrade_config/
 sudo chown -R pst-live:pst-live /srv/pysystemtrade/live
-sudo -u pst-live ln -sfn /srv/pysystemtrade/live/pysystemtrade_config/private /srv/pysystemtrade/live/pysystemtrade/private
 ```
-
-Then edit live private config separately.
 
 ### 3. Create live Parquet layout
 
@@ -397,6 +405,18 @@ ib_ipaddress: 127.0.0.1
 ib_port: 4001
 ib_idoffset: 1
 broker_account: U123456        # replace with actual live account
+```
+
+Ensure `~pst-live/.profile` resolves source code from the shared checkout and runtime paths from the live tree:
+
+```bash
+export PYSYSTEMTRADE_HOME=/srv/pysystemtrade/code/pysystemtrade
+export SCRIPT_PATH=/srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/scripts
+export ECHO_PATH=/srv/pysystemtrade/live/echoes
+export MONGO_DATA=/srv/pysystemtrade/mongo-data
+export PARQUET_DATA=/srv/pysystemtrade/live/parquet
+export PYTHONPATH=/srv/pysystemtrade/live/pysystemtrade_config:${PYTHONPATH:-}
+cd "$PYSYSTEMTRADE_HOME"
 ```
 
 Do not reuse the paper `broker_account`. Do not rely on IB default account selection.
@@ -489,7 +509,7 @@ Example live crontab:
 Install:
 
 ```bash
-sudo -u pst-live crontab /srv/pysystemtrade/live/pysystemtrade/sysproduction/linux/crontab.live
+sudo -u pst-live crontab /srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/crontab.live
 ```
 
 ## Phase 3: disable data collection in `pst-paper` so it depends on `pst-live`
@@ -533,10 +553,10 @@ But the supplied `run_daily_fx_and_contract_updates` is not suitable for paper-a
 
 Recommended solution: add a paper-only wrapper that runs only sampled-contract updates.
 
-Create a local script/module in the paper private/code area, for example:
+Create the Python entry point in paper-owned private code/config, not in the shared source checkout:
 
 ```python
-# /srv/pysystemtrade/paper/pysystemtrade/private/run_daily_sampled_contracts_only.py
+# /srv/pysystemtrade/paper/pysystemtrade_config/private/run_daily_sampled_contracts_only.py
 
 from syscontrol.run_process import processToRun
 from sysproduction.update_sampled_contracts import updateSampledContracts
@@ -559,10 +579,10 @@ if __name__ == "__main__":
     run_daily_sampled_contracts_only()
 ```
 
-Create a shell wrapper:
+Create a paper-owned shell wrapper outside the shared code checkout:
 
 ```bash
-# /srv/pysystemtrade/paper/pysystemtrade/sysproduction/linux/scripts/run_daily_sampled_contracts_only
+# /srv/pysystemtrade/paper/bin/run_daily_sampled_contracts_only
 #!/bin/bash
 . ~/.profile
 . p private.run_daily_sampled_contracts_only.run_daily_sampled_contracts_only
@@ -571,14 +591,15 @@ Create a shell wrapper:
 Make it executable:
 
 ```bash
-sudo chmod +x /srv/pysystemtrade/paper/pysystemtrade/sysproduction/linux/scripts/run_daily_sampled_contracts_only
-sudo chown pst-paper:pst-paper /srv/pysystemtrade/paper/pysystemtrade/sysproduction/linux/scripts/run_daily_sampled_contracts_only
+sudo mkdir -p /srv/pysystemtrade/paper/bin
+sudo chmod +x /srv/pysystemtrade/paper/bin/run_daily_sampled_contracts_only
+sudo chown -R pst-paper:pst-paper /srv/pysystemtrade/paper/bin
 ```
 
 Paper can then run this safely, because it updates paper Mongo only:
 
 ```cron
-30 07 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_daily_sampled_contracts_only >> $ECHO_PATH/run_daily_sampled_contracts_only.txt 2>&1
+30 07 * * 1-5 $HOME/.profile; /srv/pysystemtrade/paper/bin/run_daily_sampled_contracts_only >> $ECHO_PATH/run_daily_sampled_contracts_only.txt 2>&1
 ```
 
 If paper does not need fresh local contract metadata, you can skip this wrapper initially. Risk: paper may have stale contract metadata around rolls/expiries.
@@ -603,7 +624,7 @@ Simple cron-based schedule:
 45 00 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_capital_update >> $ECHO_PATH/run_capital_update.txt 2>&1
 
 # Optional local Mongo-only contract metadata update
-30 07 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_daily_sampled_contracts_only >> $ECHO_PATH/run_daily_sampled_contracts_only.txt 2>&1
+30 07 * * 1-5 $HOME/.profile; /srv/pysystemtrade/paper/bin/run_daily_sampled_contracts_only >> $ECHO_PATH/run_daily_sampled_contracts_only.txt 2>&1
 
 # No shared price writers here.
 # No run_daily_price_updates.
