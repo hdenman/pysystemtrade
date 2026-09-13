@@ -5,26 +5,21 @@ let
   source_path = "${home}/algo-trading/pysystemtrade";
   data_path = "${home}/algo-trading/pysystemtrade-data";
   config_path = "${home}/algo-trading/pysystemtrade_config";
+  home_common_path = "${home}/dotfiles/nix/devenv-shell-common.nix";
+  fallback_common_path = "/home/hdenman/dotfiles/nix/devenv-shell-common.nix";
+  common_path =
+    if builtins.pathExists home_common_path
+    then home_common_path
+    else fallback_common_path;
 in
 {
-  imports = [
-    (builtins.getEnv "HOME" + "/dotfiles/nix/devenv-shell-common.nix")
-  ];
+  imports = [ common_path ];
 
   # https://devenv.sh/basics/
   env.GREET = "pysystemtrade";
 
-  env.PYSYS_CODE="${source_path}";
-  env.PYSYS_PRIVATE_CONFIG_DIR=config_path;
-  env.PYTHONPATH = lib.mkForce "${source_path}";
-  env.SCRIPT_PATH="${source_path}/sysproduction/linux/scripts";
-
-  env.PARQUET_DATA="${data_path}/parquet/";
-  env.MONGO_DATA="${data_path}/mongodb/";
-  env.MONGO_BACKUP_PATH="${data_path}/mongo_backup";
-
-  env.ECHO_PATH="${data_path}/echos";
-  env.LOG_PATH="${data_path}/logs";
+  # Runtime paths are exported in enterShell with shell-default semantics so
+  # production profiles can override them before invoking `devenv shell`.
 
 
 
@@ -87,6 +82,16 @@ in
     hello
     git --version
     export OPENROUTER_API_KEY=$(cat ~/.api-keys/.openrouter-api-key-pysystemtrade)
+    export PYSYS_CODE=''${PYSYS_CODE:-${source_path}}
+    export PYSYSTEMTRADE_HOME=''${PYSYSTEMTRADE_HOME:-$PYSYS_CODE}
+    export PYSYS_PRIVATE_CONFIG_DIR=''${PYSYS_PRIVATE_CONFIG_DIR:-${config_path}}
+    export PYTHONPATH=''${PYTHONPATH:-${source_path}}
+    export SCRIPT_PATH=''${SCRIPT_PATH:-${source_path}/sysproduction/linux/scripts}
+    export PARQUET_DATA=''${PARQUET_DATA:-${data_path}/parquet/}
+    export MONGO_DATA=''${MONGO_DATA:-${data_path}/mongodb/}
+    export MONGO_BACKUP_PATH=''${MONGO_BACKUP_PATH:-${data_path}/mongo_backup}
+    export ECHO_PATH=''${ECHO_PATH:-${data_path}/echos}
+    export LOG_PATH=''${LOG_PATH:-${data_path}/logs}
     if [ "$(hostname)" = "marvin" ]; then
       export PYSYS_UNIVERSE=''${PYSYS_UNIVERSE:-futures}
     else
