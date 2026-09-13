@@ -91,6 +91,7 @@ def pd_readcsv(
     input_column_mapping: Union[dict, named_object] = arg_not_supplied,
     skiprows: int = 0,
     skipfooter: int = 0,
+    comment: str = "#",
 ) -> pd.DataFrame:
     """
     Reads a pandas data frame, with time index labelled
@@ -101,13 +102,13 @@ def pd_readcsv(
     :param date_format: usual stfrtime format
     :param input_column_mapping: If supplied remaps column names in .csv file
     :param skiprows, skipfooter: passed to pd.read_csv
+    :param comment: Character indicating start of comments (default '#')
 
     :returns: pd.DataFrame
 
     """
 
-    df = pd.read_csv(filename, skiprows=skiprows, skipfooter=skipfooter)
-
+    df = pd.read_csv(filename, skiprows=skiprows, skipfooter=skipfooter, comment=comment)
     ## Add time index as index
     try:
         df = add_datetime_index(

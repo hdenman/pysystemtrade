@@ -84,7 +84,7 @@ class csvFuturesInstrumentData(futuresInstrumentData):
 
     def _load_and_store_instrument_csv_as_df(self) -> pd.DataFrame:
         try:
-            config_data = pd.read_csv(self.config_file)
+            config_data = pd.read_csv(self.config_file, comment="#")
         except BaseException:
             raise Exception("Can't read file %s" % self.config_file)
 

@@ -14,10 +14,9 @@ class allRollParameters(pd.DataFrame):
     @classmethod
     def read_from_file(allRollParameters, filename):
         try:
-            roll_data = pd.read_csv(filename)
+            roll_data = pd.read_csv(filename, comment="#")
         except BaseException:
             raise Exception("Can't read file %s" % filename)
-
         try:
             roll_data.index = roll_data.Instrument
             roll_data.drop(labels="Instrument", axis=1, inplace=True)

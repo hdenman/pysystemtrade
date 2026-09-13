@@ -49,7 +49,7 @@ class csvSpreadCostData(spreadCostData):
 
     def get_spread_costs_as_series(self) -> pd.Series:
         try:
-            spread_cost_data = pd.read_csv(self.config_file)
+            spread_cost_data = pd.read_csv(self.config_file, comment="#")
         except BaseException:
             raise Exception("Can't read file %s" % self.config_file)
 
