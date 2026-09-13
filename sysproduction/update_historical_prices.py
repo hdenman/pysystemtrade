@@ -10,6 +10,10 @@ from typing import List, Tuple
 
 from syscore.constants import arg_not_supplied, success, failure
 from syscore.exceptions import missingData
+from sysproduction.update_sampled_contracts import (
+    sort_instrument_codes_for_update,
+    get_currently_traded_contract_keys,
+)
 from syscore.pandas.merge_data_keeping_past_data import SPIKE_IN_DATA, mergeError
 from syscore.dateutils import DAILY_PRICE_FREQ, Frequency
 from syscore.pandas.frequency import merge_data_with_different_freq
@@ -70,6 +74,10 @@ def download_all_instrument_prices_now(data: dataBlob):
     price_data = diagPrices(data)
 
     list_of_instrument_codes = price_data.get_list_of_instruments_in_multiple_prices()
+    traded_contract_keys = get_currently_traded_contract_keys(data)
+    list_of_instrument_codes = sort_instrument_codes_for_update(
+        list_of_instrument_codes, traded_contract_keys
+    )
     update_historical_prices_for_list_of_instrument_codes(
         data=data,
         list_of_instrument_codes=list_of_instrument_codes,

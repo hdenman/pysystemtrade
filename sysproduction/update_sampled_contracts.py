@@ -10,6 +10,7 @@ from sysobjects.rolls import contractDateWithRollParameters
 
 from sysdata.data_blob import dataBlob
 from sysproduction.data.prices import diagPrices, get_valid_instrument_code_from_user
+from sysproduction.data.positions import diagPositions
 from sysproduction.data.contracts import dataContracts
 from sysproduction.data.broker import dataBroker
 
@@ -38,18 +39,16 @@ def update_sampled_contracts():
     Contracts are never deleted from the database
 
     Accepts an optional instrument code as a CLI argument (e.g. python update_sampled_contracts.py EDOLLAR).
-    If not supplied, prompts interactively (Enter for ALL).
-
+    If not supplied, updates all instruments without prompting. Use --interactive for the old prompt-driven flow.
     """
     with dataBlob(log_name="Update-Sampled_Contracts") as data:
         update_contracts_object = updateSampledContracts(data)
 
-        cli_instrument = sys.argv[1] if len(sys.argv) > 1 else None
+        cli_instrument = sys.argv[1] if len(sys.argv) > 1 else ALL_INSTRUMENTS
 
-        if cli_instrument is not None:
-            instrument_code = cli_instrument
+        if cli_instrument != "--interactive":
             update_contracts_object.update_sampled_contracts(
-                instrument_code=instrument_code
+                instrument_code=cli_instrument
             )
             return success
 
@@ -61,7 +60,7 @@ def update_sampled_contracts():
             instrument_code=instrument_code
         )
 
-        if instrument_code is ALL_INSTRUMENTS:
+        if instrument_code == ALL_INSTRUMENTS:
             return success
 
         do_another = True
@@ -92,16 +91,40 @@ def update_active_contracts_with_data(
     data: dataBlob, instrument_code: str = ALL_INSTRUMENTS
 ):
     diag_prices = diagPrices(data)
-    if instrument_code is ALL_INSTRUMENTS:
+    traded_contract_keys = get_currently_traded_contract_keys(data)
+    if instrument_code == ALL_INSTRUMENTS:
         list_of_codes = diag_prices.get_list_of_instruments_in_multiple_prices()
+        list_of_codes = sort_instrument_codes_for_update(
+            list_of_codes, traded_contract_keys
+        )
     else:
         list_of_codes = [instrument_code]
 
     for instrument_code in list_of_codes:
-        update_active_contracts_for_instrument(instrument_code, data)
+        update_active_contracts_for_instrument(
+            instrument_code, data, traded_contract_keys=traded_contract_keys
+        )
 
 
-def update_active_contracts_for_instrument(instrument_code: str, data: dataBlob):
+def sort_instrument_codes_for_update(
+    instrument_codes: list, traded_contract_keys: set
+) -> list:
+    traded_instruments = set(
+        contract_key.split("/", 1)[0]
+        for contract_key in traded_contract_keys
+    )
+    return sorted(
+        instrument_codes,
+        key=lambda instrument_code: (
+            instrument_code not in traded_instruments,
+            instrument_code,
+        ),
+    )
+
+
+def update_active_contracts_for_instrument(
+    instrument_code: str, data: dataBlob, traded_contract_keys: set = None
+):
     # Get the list of contracts we'd want to get prices for, given current
     # roll calendar
     required_contract_chain = get_contract_chain(data, instrument_code)
@@ -113,7 +136,10 @@ def update_active_contracts_for_instrument(instrument_code: str, data: dataBlob)
 
     # Now to check if expiry dates are matched to IB, and mark expired or unchained contracts as no longer sampling
     update_expiries_and_sampling_status_for_contracts(
-        instrument_code, data, contract_chain=required_contract_chain
+        instrument_code,
+        data,
+        contract_chain=required_contract_chain,
+        traded_contract_keys=traded_contract_keys,
     )
 
     check_key_contracts_have_not_expired(instrument_code=instrument_code, data=data)
@@ -310,7 +336,10 @@ def add_new_contract_with_sampling_on(contract_to_add: futuresContract, data: da
 
 
 def update_expiries_and_sampling_status_for_contracts(
-    instrument_code: str, data: dataBlob, contract_chain: listOfFuturesContracts
+    instrument_code: str,
+    data: dataBlob,
+    contract_chain: listOfFuturesContracts,
+    traded_contract_keys: set = None,
 ):
     """
     # Now to check if expiry dates are resolved, and update sampling status
@@ -325,12 +354,46 @@ def update_expiries_and_sampling_status_for_contracts(
     all_contracts_in_db = diag_contracts.get_all_contract_objects_for_instrument_code(
         instrument_code
     )
-    currently_sampling_contracts = all_contracts_in_db.currently_sampling()
+    currently_sampling_contracts = sort_contracts_for_update(
+        all_contracts_in_db.currently_sampling(), traded_contract_keys
+    )
 
     for contract_object in currently_sampling_contracts:
         update_expiry_and_sampling_status_for_contract(
             contract_object=contract_object, data=data, contract_chain=contract_chain
         )
+
+
+def sort_contracts_for_update(
+    contracts: listOfFuturesContracts, traded_contract_keys: set = None
+) -> list:
+    if traded_contract_keys is None:
+        traded_contract_keys = set()
+    return sorted(
+        contracts,
+        key=lambda contract: (
+            contract.key not in traded_contract_keys,
+            contract.instrument_code,
+            contract.date_str,
+        ),
+    )
+
+
+def get_currently_traded_contract_keys(data: dataBlob) -> set:
+    try:
+        positions = diagPositions(data).get_all_current_contract_positions()
+    except Exception as exc:
+        data.log.warning(
+            "Could not determine current contract positions for update ordering: %s"
+            % str(exc)
+        )
+        return set()
+
+    return set(
+        position.contract.key
+        for position in positions
+        if position.position != 0
+    )
 
 
 def update_expiry_and_sampling_status_for_contract(

@@ -30,19 +30,32 @@ from sysproduction.data.prices import (
     updatePrices,
     get_valid_instrument_code_from_user,
 )
+from sysproduction.update_sampled_contracts import (
+    sort_instrument_codes_for_update,
+    get_currently_traded_contract_keys,
+)
 
 ALL_INSTRUMENTS = "ALL"
 
 
 def update_multiple_adjusted_prices():
     """
-    Do a daily update for multiple and adjusted prices
+    Do a daily update for multiple and adjusted prices.
 
-    :return: Nothing
+    Accepts an optional instrument code as a CLI argument.
+    If not supplied, updates all instruments without prompting. Use --interactive for the old prompt-driven flow.
     """
+    import sys
 
     with dataBlob(log_name="Update-Multiple-Adjusted-Prices") as data:
         update_multiple_adjusted_prices_object = updateMultipleAdjustedPrices(data)
+        cli_instrument = sys.argv[1] if len(sys.argv) > 1 else ALL_INSTRUMENTS
+
+        if cli_instrument != "--interactive":
+            update_multiple_adjusted_prices_object.update_multiple_adjusted_prices(
+                instrument_code=cli_instrument
+            )
+            return success
 
         instrument_code = get_valid_instrument_code_from_user(
             all_code=ALL_INSTRUMENTS, allow_all=True
@@ -54,7 +67,6 @@ def update_multiple_adjusted_prices():
         if instrument_code is ALL_INSTRUMENTS:
             ## done
             return success
-
         ## else go into a loop
         do_another = True
 
@@ -88,6 +100,10 @@ def update_multiple_adjusted_prices_with_data(
     diag_prices = diagPrices(data)
     if instrument_code == ALL_INSTRUMENTS:
         list_of_codes = diag_prices.get_list_of_instruments_in_multiple_prices()
+        traded_contract_keys = get_currently_traded_contract_keys(data)
+        list_of_codes = sort_instrument_codes_for_update(
+            list_of_codes, traded_contract_keys
+        )
     else:
         list_of_codes = [instrument_code]
 
