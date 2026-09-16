@@ -19,6 +19,7 @@ Market data means:
 - `futures_multiple_prices`
 - `futures_adjusted_prices`
 - `spotfx_prices`
+- `futures/roll_calendars` (shared roll-calendar CSV configuration used to construct multiple/adjusted prices)
 - optionally `spreads`, if you treat spread histories as shared market data
 
 Trading state means:
@@ -28,10 +29,9 @@ Trading state means:
 - capital
 - current/historic positions
 - optimal positions
-- roll state
+- roll state (tracked in MongoDB)
 - process control
 - logs/echos/backtest state
-
 ## Target layout
 
 Recommended filesystem layout:
@@ -46,8 +46,9 @@ Recommended filesystem layout:
     futures_multiple_prices/
     futures_adjusted_prices/
     spotfx_prices/
+    futures/
+      roll_calendars/                 # canonical shared roll-calendar CSV directory
     spreads/                         # optional shared market data
-  mongo-data/
     paper/                          # FerretDB SQLite files for paper only
     live/                           # FerretDB SQLite files for live only
 
@@ -111,7 +112,7 @@ sudo usermod -aG pst-data pst-live
 Set ownership policy:
 
 ```bash
-sudo mkdir -p /srv/pysystemtrade/shared-parquet
+sudo mkdir -p /srv/pysystemtrade/shared-parquet/futures/roll_calendars
 sudo chown -R pst-live:pst-data /srv/pysystemtrade/shared-parquet
 sudo chmod -R 2775 /srv/pysystemtrade/shared-parquet
 ```
@@ -119,10 +120,9 @@ sudo chmod -R 2775 /srv/pysystemtrade/shared-parquet
 If you want stronger safety, make `pst-paper` read-only on shared market data after migration:
 
 ```bash
-sudo setfacl -R -m u:pst-live:rwx,u:pst-paper:rx,g:pst-data:rx /srv/pysystemtrade/shared-parquet
-sudo setfacl -R -d -m u:pst-live:rwx,u:pst-paper:rx,g:pst-data:rx /srv/pysystemtrade/shared-parquet
+sudo setfacl -R -m u:pst-live:rwx,u:pst-paper:rx,g:pst-data:rx,m:rx /srv/pysystemtrade/shared-parquet
+sudo setfacl -R -d -m u:pst-live:rwx,u:pst-paper:rx,g:pst-data:rx,m:rx /srv/pysystemtrade/shared-parquet
 ```
-
 On NixOS, prefer declarative users/groups in `/etc/nixos/configuration.nix` or your flake module. Equivalent shape:
 
 ```nix
@@ -526,7 +526,7 @@ sudo -u pst-live crontab /srv/pysystemtrade/code/pysystemtrade/sysproduction/lin
 
 ### 1. Disable shared price writers in paper cron
 
-Paper must not run jobs that write to shared market-data Parquet directories.
+Paper must not run jobs that write to shared market-data Parquet directories or shared roll calendars. Paper may read calendars through `roll_calendar_store`. Roll-calendar regeneration, initial boot-strapping via `bootstrap_from_barchart_csv`, and interactive calendar modification via `safely_modify_roll_parameters` must be run by `pst-live` (or an administrator) as a writer.
 
 Do not schedule these in `pst-paper`:
 
