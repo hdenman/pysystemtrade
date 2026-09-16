@@ -1,3 +1,4 @@
+from sysproduction.data.prices import diagPrices
 from syscore.exceptions import missingData
 from sysbrokers.IB.ib_futures_contract_price_data import (
     futuresContract,
@@ -10,12 +11,24 @@ from sysproduction.data.prices import updatePrices
 from sysproduction.update_historical_prices import write_merged_prices_for_contract
 
 
-def seed_price_data_from_IB(instrument_code):
+def seed_price_data_from_IB(instrument_code: str, fill_gaps_only: bool = True):
     data = dataBlob()
     data_broker = dataBroker(data)
+    diag_prices = diagPrices(data)
+
+    existing_contract_dates = set(
+        diag_prices.contract_dates_with_price_data_for_instrument_code(
+            instrument_code
+        )
+    )
 
     list_of_contracts = data_broker.get_list_of_contract_dates_for_instrument_code(
         instrument_code, allow_expired=True
+    )
+
+    data.log.info(
+        "Seeding price data from IB for %s (found %d contract dates from broker, %d existing in DB)"
+        % (instrument_code, len(list_of_contracts), len(existing_contract_dates))
     )
 
     ## This returns yyyymmdd strings, where we have the actual expiry date
@@ -27,6 +40,13 @@ def seed_price_data_from_IB(instrument_code):
 
         date_str = contract_date[:6]
         contract_object = futuresContract(instrument_code, date_str)
+
+        if fill_gaps_only and date_str in existing_contract_dates:
+            data.log.info(
+                "Skipping seeding for %s (already has price data in DB)"
+                % str(contract_object)
+            )
+            continue
 
         seed_price_data_for_contract(data=data, contract_object=contract_object)
 
