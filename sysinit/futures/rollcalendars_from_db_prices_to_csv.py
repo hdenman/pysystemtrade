@@ -3,7 +3,7 @@ from syscore.constants import arg_not_supplied
 
 from sysobjects.rolls import rollParameters
 from sysobjects.roll_calendars import rollCalendar
-from sysdata.csv.csv_roll_calendars import csvRollCalendarData
+from sysdata.csv.csv_roll_calendars import csvRollCalendarData, CSV_ROLL_CALENDAR_DIRECTORY
 from sysdata.csv.csv_roll_parameters import csvRollParametersData
 from sysdata.futures.rolls_parameters import rollParametersData
 from sysproduction.data.prices import get_valid_instrument_code_from_user, diagPrices
@@ -48,12 +48,17 @@ def build_and_write_roll_calendar(
     roll_parameters_data: rollParametersData = arg_not_supplied,
     roll_parameters: rollParameters = arg_not_supplied,
 ):
-    if output_datapath is arg_not_supplied:
+    csv_roll_calendars = csvRollCalendarData(output_datapath)
+
+    if (
+        output_datapath is arg_not_supplied
+        and csv_roll_calendars.datapath == CSV_ROLL_CALENDAR_DIRECTORY
+    ):
         print(
             "*** WARNING *** This will overwrite the provided roll calendar. Might be better to use a temporary directory!"
         )
     else:
-        print("Writing to %s" % output_datapath)
+        print("Writing to %s" % csv_roll_calendars.datapath)
 
     if input_prices is arg_not_supplied:
         prices = parquet_futures_contract_price_data
@@ -64,9 +69,6 @@ def build_and_write_roll_calendar(
         if roll_parameters_data is arg_not_supplied:
             roll_parameters_data = csvRollParametersData()
         roll_parameters = roll_parameters_data.get_roll_parameters(instrument_code)
-
-    csv_roll_calendars = csvRollCalendarData(output_datapath)
-
     dict_of_all_futures_contract_prices = prices.get_merged_prices_for_instrument(
         instrument_code
     )

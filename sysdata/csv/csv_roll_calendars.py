@@ -9,7 +9,24 @@ from syscore.constants import arg_not_supplied
 from syslogging.logger import *
 
 CSV_ROLL_CALENDAR_DIRECTORY = "data.futures.roll_calendars_csv"
+ROLL_CALENDAR_STORE_CONFIG_KEY = "roll_calendar_store"
 DATE_INDEX_NAME = "DATE_TIME"
+
+
+def get_roll_calendar_datapath(datapath=arg_not_supplied) -> str:
+    if datapath is not arg_not_supplied:
+        return datapath
+
+    from sysdata.config.production_config import get_production_config
+
+    config_path = get_production_config().get_element_or_arg_not_supplied(
+        ROLL_CALENDAR_STORE_CONFIG_KEY
+    )
+    if config_path is not arg_not_supplied:
+        return config_path
+
+    return CSV_ROLL_CALENDAR_DIRECTORY
+
 
 # NOTE: can't change calendars here - do we need init?
 # common with all other csv objects?
@@ -26,8 +43,7 @@ class csvRollCalendarData(rollCalendarData):
     ):
         super().__init__(log=log)
 
-        if datapath is arg_not_supplied:
-            datapath = CSV_ROLL_CALENDAR_DIRECTORY
+        datapath = get_roll_calendar_datapath(datapath)
 
         self._datapath = datapath
 

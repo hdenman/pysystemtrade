@@ -3,10 +3,12 @@
 # matplotlib.use("TkAgg")
 from matplotlib.pyplot import show
 import pandas as pd
+from syscore.constants import arg_not_supplied
 from syscore.interactive.input import (
     true_if_answer_is_yes,
     get_input_from_user_and_convert_to_type,
 )
+from sysdata.csv.csv_roll_calendars import csvRollCalendarData
 from sysdata.data_blob import dataBlob
 from sysinit.futures.rollcalendars_from_db_prices_to_csv import (
     build_and_write_roll_calendar,
@@ -37,10 +39,14 @@ def safely_modify_roll_parameters(data: dataBlob):
         data, instrument_code=instrument_code
     )
 
-    output_path_for_temp_csv_files = input(
-        "Path for writing roll calendar and roll parameters; must be absolute with leading "
-        "\ or / eg /home/rob/pysystemtrade/data/futures/roll_calendars_csv/? "
-    )
+    default_roll_calendar_path = csvRollCalendarData().datapath
+    user_path = input(
+        f"Path for writing roll calendar and roll parameters <return for {default_roll_calendar_path}>? "
+    ).strip()
+    if user_path == "":
+        output_path_for_temp_csv_files = arg_not_supplied
+    else:
+        output_path_for_temp_csv_files = user_path
     build_and_write_roll_calendar(
         instrument_code,
         roll_parameters=new_roll_parameters,
@@ -120,10 +126,11 @@ def safely_modify_roll_parameters(data: dataBlob):
         roll_parameters=new_roll_parameters,
         areyoureallysure=True,
     )
+    default_roll_calendar_path = csvRollCalendarData().datapath
     print(
-        "Updated roll parameters. Copy them to /data/futures/csvconfig/rollconfig.csv ***NOW*** (and perhaps reinstall pst)"
+        f"Updated roll parameters in the configured data store; roll calendar CSVs are written to {default_roll_calendar_path} when the default path is used."
     )
-    input("Press return when copy and reinstall done")
+    input("Press return when ready")
     ## Overwrite multiple prices
     update_prices = updatePrices(data)
     update_prices.add_multiple_prices(
