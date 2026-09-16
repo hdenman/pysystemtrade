@@ -38,6 +38,15 @@ from sysobjects.contract_dates_and_expiries import contractDate
 from sysobjects.contracts import futuresContract
 from sysobjects.instruments import futuresInstrument
 from sysobjects.rolls import contractDateWithRollParameters
+from sysinit.futures.adjustedprices_from_db_multiple_to_db import (
+    process_adjusted_prices_single_instrument,
+)
+from sysinit.futures.multipleprices_from_db_prices_and_csv_calendars_to_db import (
+    process_multiple_prices_single_instrument,
+)
+from sysinit.futures.rollcalendars_from_db_prices_to_csv import (
+    build_and_write_roll_calendar,
+)
 from sysinit.futures.seed_price_data_from_IB import seed_price_data_from_IB
 from sysproduction.data.contracts import dataContracts
 from sysproduction.data.prices import diagPrices, get_valid_instrument_code_from_user
@@ -55,6 +64,7 @@ class ReviveOptions:
     max_rolls: int = 48
     allow_forward_fill: bool = True
     seed_from_ib: bool = False
+    rebuild_history: Optional[bool] = None
     skip_sampled_contracts: bool = False
     skip_price_download: bool = False
     dry_run: bool = False
@@ -66,9 +76,11 @@ class ReviveResult:
     ending_priced_contract: str
     rolls_performed: int
     seeded_prices_from_ib: bool
+    rebuilt_history: bool
     refreshed_sampled_contracts: bool
     downloaded_prices: bool
     refreshed_multiple_adjusted: bool
+
 
 
 def revive_instrument(instrument_code: str, options: ReviveOptions) -> ReviveResult:
@@ -132,9 +144,35 @@ def revive_instrument(instrument_code: str, options: ReviveOptions) -> ReviveRes
                 )
             downloaded_prices = True
 
+        rebuild_history = (
+            options.seed_from_ib
+            if options.rebuild_history is None
+            else options.rebuild_history
+        )
+
         refreshed_multiple_adjusted = False
-        if not options.dry_run:
-            print("\nRefreshing multiple and adjusted prices")
+        rebuilt_history = False
+        if rebuild_history:
+            print("\nRebuilding roll calendar, multiple prices, and adjusted prices from scratch")
+            if options.dry_run:
+                print("DRY RUN: would rebuild roll calendar, multiple prices, and adjusted prices")
+            else:
+                build_and_write_roll_calendar(
+                    instrument_code, write=True, check_before_writing=False
+                )
+                multiple_prices = process_multiple_prices_single_instrument(
+                    instrument_code, ADD_TO_DB=True, ADD_TO_CSV=False
+                )
+                process_adjusted_prices_single_instrument(
+                    instrument_code,
+                    multiple_prices=multiple_prices,
+                    ADD_TO_DB=True,
+                    ADD_TO_CSV=False,
+                )
+                rebuilt_history = True
+                refreshed_multiple_adjusted = True
+        elif not options.dry_run:
+            print("\nRefreshing multiple and adjusted prices (incremental)")
             update_multiple_adjusted_prices_for_instrument(instrument_code, data)
             refreshed_multiple_adjusted = True
         else:
@@ -145,6 +183,7 @@ def revive_instrument(instrument_code: str, options: ReviveOptions) -> ReviveRes
         ending_priced_contract=ending_priced_contract,
         rolls_performed=rolls_performed,
         seeded_prices_from_ib=seeded_prices_from_ib,
+        rebuilt_history=rebuilt_history,
         refreshed_sampled_contracts=refreshed_sampled_contracts,
         downloaded_prices=downloaded_prices,
         refreshed_multiple_adjusted=refreshed_multiple_adjusted,
@@ -350,6 +389,18 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Seed missing historical contract price data from IB before rolling.",
     )
     parser.add_argument(
+        "--rebuild-history",
+        action="store_true",
+        default=None,
+        help="Rebuild roll calendar, multiple prices, and adjusted prices from scratch (defaults to True if --seed-from-ib is set).",
+    )
+    parser.add_argument(
+        "--no-rebuild-history",
+        action="store_false",
+        dest="rebuild_history",
+        help="Force incremental multiple/adjusted price update even when --seed-from-ib is set.",
+    )
+    parser.add_argument(
         "--skip-sampled-contracts",
         action="store_true",
         default=False,
@@ -391,6 +442,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         max_rolls=args.max_rolls,
         allow_forward_fill=not args.no_forward_fill,
         seed_from_ib=args.seed_from_ib,
+        rebuild_history=args.rebuild_history,
         skip_sampled_contracts=args.skip_sampled_contracts,
         skip_price_download=args.skip_price_download,
         dry_run=args.dry_run,
@@ -408,6 +460,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         f"rolls={result.rolls_performed}; "
         f"seeded_from_ib={result.seeded_prices_from_ib}; "
         f"sampled_contracts={result.refreshed_sampled_contracts}; "
+        f"rebuilt_history={result.rebuilt_history}; "
         f"downloaded_prices={result.downloaded_prices}; "
         f"multiple_adjusted={result.refreshed_multiple_adjusted}"
     )
