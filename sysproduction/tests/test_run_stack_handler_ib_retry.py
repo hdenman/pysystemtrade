@@ -11,11 +11,11 @@ from sysbrokers.IB.ib_connection import (
     IB_REQUEST_TIMEOUT_SECONDS,
     connectionIB,
 )
-from sysproduction.run_stack_handler import (
-    RobustIBStackHandler,
+from sysbrokers.IB.ib_retry import (
+    RobustIBRetryWrapper,
     is_ib_disconnect_exception,
     raise_if_known_ib_connection_problem,
-    reset_ib_data_blob_and_handler_state,
+    reset_ib_data_blob_and_target_state,
 )
 from syscore.constants import arg_not_supplied
 from sysdata.data_blob import dataBlob
@@ -28,6 +28,7 @@ def _make_wrapped_timeout_error():
 
 class TestRunStackHandlerIBRetry(unittest.TestCase):
     def test_is_ib_disconnect_exception(self):
+        self.assertTrue(is_ib_disconnect_exception(ConnectionError("Not connected")))
         self.assertTrue(is_ib_disconnect_exception(ConnectionError("Socket disconnect")))
         self.assertTrue(is_ib_disconnect_exception(Exception("Peer closed connection.")))
         self.assertTrue(is_ib_disconnect_exception(TimeoutError()))
@@ -96,14 +97,15 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         def fake_time():
             return times.pop(0) if times else 3.0
 
-        robust = RobustIBStackHandler(
+        robust = RobustIBRetryWrapper(
             mock_stack_handler,
+            process_name="run_stack_handler",
             max_retry_seconds=900,
             time_fn=fake_time,
             sleep_fn=MagicMock(),
         )
 
-        with patch("sysproduction.run_stack_handler.reset_ib_data_blob_and_handler_state") as mock_reset:
+        with patch("sysbrokers.IB.ib_retry.reset_ib_data_blob_and_target_state") as mock_reset:
             mock_reset.side_effect = lambda stack_handler: setattr(
                 stack_handler.data, "_ib_conn", arg_not_supplied
             )
@@ -131,8 +133,9 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         mock_stack_handler.data.log = MagicMock()
         mock_stack_handler.some_method.return_value = "ok"
 
-        robust = RobustIBStackHandler(
+        robust = RobustIBRetryWrapper(
             mock_stack_handler,
+            process_name="run_stack_handler",
             max_retry_seconds=900,
             time_fn=time.monotonic,
             sleep_fn=MagicMock(),
@@ -161,20 +164,22 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         def fake_sleep(secs):
             sleep_calls.append(secs)
 
-        robust = RobustIBStackHandler(
+        robust = RobustIBRetryWrapper(
             mock_stack_handler,
+            process_name="run_stack_handler",
             max_retry_seconds=900,
             time_fn=fake_time,
             sleep_fn=fake_sleep,
         )
 
-        with patch("sysproduction.run_stack_handler.reset_ib_data_blob_and_handler_state") as mock_reset:
+        with patch("sysbrokers.IB.ib_retry.reset_ib_data_blob_and_target_state") as mock_reset:
             result = robust.check_external_position_break()
 
         self.assertEqual(result, "success")
         self.assertEqual(mock_stack_handler.check_external_position_break.call_count, 3)
         self.assertEqual(mock_reset.call_count, 2)
         self.assertEqual(sleep_calls, [1.0, 2.0])
+
     def test_wrapped_timeout_retries_and_succeeds(self):
         mock_stack_handler = MagicMock()
         mock_stack_handler.data.log = MagicMock()
@@ -198,14 +203,15 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         def fake_sleep(secs):
             sleep_calls.append(secs)
 
-        robust = RobustIBStackHandler(
+        robust = RobustIBRetryWrapper(
             mock_stack_handler,
+            process_name="run_stack_handler",
             max_retry_seconds=900,
             time_fn=fake_time,
             sleep_fn=fake_sleep,
         )
 
-        with patch("sysproduction.run_stack_handler.reset_ib_data_blob_and_handler_state") as mock_reset:
+        with patch("sysbrokers.IB.ib_retry.reset_ib_data_blob_and_target_state") as mock_reset:
             result = robust.check_external_position_break()
 
         self.assertEqual(result, "success")
@@ -213,9 +219,8 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         self.assertEqual(mock_reset.call_count, 1)
         self.assertEqual(sleep_calls, [1.0])
         self.assertTrue(mock_stack_handler.data.log.warning.called)
-        self.assertTrue(mock_stack_handler.data.log.warning.called)
 
-    def test_reset_ib_data_blob_and_handler_state(self):
+    def test_reset_ib_data_blob_and_target_state(self):
         mock_stack_handler = MagicMock()
         data = SimpleNamespace(
             log=MagicMock(),
@@ -230,12 +235,12 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         data._ib_conn = ib_conn
         data._attr_list = ["broker_contract_position"]
 
-        with patch("sysproduction.run_stack_handler.get_broker_class_list", return_value=[MagicMock(__name__="brokerContractPositionData")]):
-            with patch("sysproduction.run_stack_handler.get_class_name", return_value="brokerContractPositionData"):
+        with patch("sysbrokers.IB.ib_retry.get_broker_class_list", return_value=[MagicMock(__name__="brokerContractPositionData")]):
+            with patch("sysbrokers.IB.ib_retry.get_class_name", return_value="brokerContractPositionData"):
                 data._get_new_name.return_value = "broker_contract_position"
                 setattr(data, "broker_contract_position", MagicMock())
 
-                reset_ib_data_blob_and_handler_state(mock_stack_handler)
+                reset_ib_data_blob_and_target_state(mock_stack_handler)
 
         ib_conn.close_connection.assert_called_once()
         data.db_ib_broker_client_id.release_clientid.assert_called_once_with(123)
@@ -254,8 +259,8 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         )
         mock_stack_handler.data = data
 
-        with patch("sysproduction.run_stack_handler.get_broker_class_list", return_value=[]):
-            reset_ib_data_blob_and_handler_state(mock_stack_handler)
+        with patch("sysbrokers.IB.ib_retry.get_broker_class_list", return_value=[]):
+            reset_ib_data_blob_and_target_state(mock_stack_handler)
 
         self.assertIs(data._ib_conn, arg_not_supplied)
         data.db_ib_broker_client_id.release_clientid.assert_not_called()
@@ -271,8 +276,8 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         data.db_ib_broker_client_id = MagicMock()
         mock_stack_handler.data = data
 
-        with patch("sysproduction.run_stack_handler.get_broker_class_list", return_value=[]):
-            reset_ib_data_blob_and_handler_state(mock_stack_handler)
+        with patch("sysbrokers.IB.ib_retry.get_broker_class_list", return_value=[]):
+            reset_ib_data_blob_and_target_state(mock_stack_handler)
 
         with patch.object(data, "_get_new_ib_connection", return_value=new_conn) as get_new_ib_connection:
             self.assertIs(data.ib_conn, new_conn)
@@ -284,14 +289,15 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         mock_stack_handler.data.log = MagicMock()
         mock_stack_handler.check_external_position_break.side_effect = ValueError("Logic error")
 
-        robust = RobustIBStackHandler(
+        robust = RobustIBRetryWrapper(
             mock_stack_handler,
+            process_name="run_stack_handler",
             max_retry_seconds=900,
             time_fn=time.monotonic,
             sleep_fn=MagicMock(),
         )
 
-        with patch("sysproduction.run_stack_handler.reset_ib_data_blob_and_handler_state") as mock_reset:
+        with patch("sysbrokers.IB.ib_retry.reset_ib_data_blob_and_target_state") as mock_reset:
             with self.assertRaises(ValueError):
                 robust.check_external_position_break()
 
@@ -307,23 +313,89 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         def fake_time():
             return times.pop(0) if times else 1000.0
 
-        robust = RobustIBStackHandler(
+        robust = RobustIBRetryWrapper(
             mock_stack_handler,
+            process_name="run_stack_handler",
             max_retry_seconds=900,
             time_fn=fake_time,
             sleep_fn=MagicMock(),
         )
 
-        with patch("sysproduction.run_stack_handler.reset_ib_data_blob_and_handler_state"):
+        with patch("sysbrokers.IB.ib_retry.reset_ib_data_blob_and_target_state"):
             result = robust.check_external_position_break()
 
         self.assertIsNone(result)
         self.assertTrue(mock_stack_handler.data.log.critical.called)
         critical_msg = mock_stack_handler.data.log.critical.call_args[0][0]
-        self.assertIn("check_external_position_break", critical_msg)
+        self.assertIn("run_stack_handler method 'check_external_position_break'", critical_msg)
         self.assertIn("retry window 900", critical_msg)
         self.assertIn("Skipping this run", critical_msg)
 
+    def test_capital_update_not_connected_retries_and_succeeds(self):
+        mock_target = MagicMock()
+        mock_target.data.log = MagicMock()
+        mock_target.update_total_capital.side_effect = [
+            ConnectionError("Not connected"),
+            "success",
+        ]
+
+        times = [0.0, 1.0, 2.0]
+        def fake_time():
+            return times.pop(0) if times else 10.0
+
+        sleep_calls = []
+        def fake_sleep(secs):
+            sleep_calls.append(secs)
+
+        robust = RobustIBRetryWrapper(
+            mock_target,
+            process_name="run_capital_update",
+            max_retry_seconds=900,
+            time_fn=fake_time,
+            sleep_fn=fake_sleep,
+        )
+
+        with patch("sysbrokers.IB.ib_retry.reset_ib_data_blob_and_target_state") as mock_reset:
+            result = robust.update_total_capital()
+
+        self.assertEqual(result, "success")
+        self.assertEqual(mock_target.update_total_capital.call_count, 2)
+        mock_reset.assert_called_once_with(mock_target)
+        self.assertEqual(sleep_calls, [1.0])
+        self.assertTrue(mock_target.data.log.warning.called)
+        warning_msg = mock_target.data.log.warning.call_args[0][0]
+        self.assertIn("run_capital_update method 'update_total_capital'", warning_msg)
+
+    def test_capital_update_preexisting_dead_connection_resets_before_method(self):
+        mock_target = MagicMock()
+        ib_conn = MagicMock()
+        ib_conn.has_active_connection_problem.return_value = True
+        ib_conn.connection_problem_description.return_value = "IB API socket is disconnected"
+        mock_target.data._ib_conn = ib_conn
+        mock_target.data.log = MagicMock()
+        mock_target.update_total_capital.return_value = "success"
+
+        times = [0.0, 1.0, 2.0]
+        def fake_time():
+            return times.pop(0) if times else 3.0
+
+        robust = RobustIBRetryWrapper(
+            mock_target,
+            process_name="run_capital_update",
+            max_retry_seconds=900,
+            time_fn=fake_time,
+            sleep_fn=MagicMock(),
+        )
+
+        with patch("sysbrokers.IB.ib_retry.reset_ib_data_blob_and_target_state") as mock_reset:
+            mock_reset.side_effect = lambda target: setattr(
+                target.data, "_ib_conn", arg_not_supplied
+            )
+            result = robust.update_total_capital()
+
+        self.assertEqual(result, "success")
+        mock_reset.assert_called_once_with(mock_target)
+        self.assertEqual(mock_target.update_total_capital.call_count, 1)
 
 if __name__ == "__main__":
     unittest.main()

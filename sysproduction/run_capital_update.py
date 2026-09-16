@@ -2,6 +2,7 @@ from syscontrol.run_process import processToRun
 from sysproduction.update_total_capital import totalCapitalUpdate
 from sysproduction.update_strategy_capital import updateStrategyCapital
 from sysdata.data_blob import dataBlob
+from sysbrokers.IB.ib_retry import RobustIBRetryWrapper
 
 
 def run_capital_update():
@@ -20,9 +21,15 @@ def get_list_of_timer_functions_for_capital_update():
 
     total_capital_update_object = totalCapitalUpdate(data_total_capital)
     strategy_capital_update_object = updateStrategyCapital(data_strategy_capital)
+    robust_total_capital_update_object = RobustIBRetryWrapper(
+        total_capital_update_object, process_name="run_capital_update"
+    )
+    robust_strategy_capital_update_object = RobustIBRetryWrapper(
+        strategy_capital_update_object, process_name="run_capital_update"
+    )
     list_of_timer_names_and_functions = [
-        ("update_total_capital", total_capital_update_object),
-        ("strategy_allocation", strategy_capital_update_object),
+        ("update_total_capital", robust_total_capital_update_object),
+        ("strategy_allocation", robust_strategy_capital_update_object),
     ]
 
     return list_of_timer_names_and_functions
