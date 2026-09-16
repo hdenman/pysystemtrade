@@ -38,6 +38,7 @@ from sysobjects.contract_dates_and_expiries import contractDate
 from sysobjects.contracts import futuresContract
 from sysobjects.instruments import futuresInstrument
 from sysobjects.rolls import contractDateWithRollParameters
+from sysinit.futures.seed_price_data_from_IB import seed_price_data_from_IB
 from sysproduction.data.contracts import dataContracts
 from sysproduction.data.prices import diagPrices, get_valid_instrument_code_from_user
 from sysproduction.reporting.data.rolls import rollingAdjustedAndMultiplePrices
@@ -53,6 +54,7 @@ class ReviveOptions:
     as_of_date: datetime.date
     max_rolls: int = 48
     allow_forward_fill: bool = True
+    seed_from_ib: bool = False
     skip_sampled_contracts: bool = False
     skip_price_download: bool = False
     dry_run: bool = False
@@ -63,6 +65,7 @@ class ReviveResult:
     starting_priced_contract: str
     ending_priced_contract: str
     rolls_performed: int
+    seeded_prices_from_ib: bool
     refreshed_sampled_contracts: bool
     downloaded_prices: bool
     refreshed_multiple_adjusted: bool
@@ -79,12 +82,20 @@ def revive_instrument(instrument_code: str, options: ReviveOptions) -> ReviveRes
             f"{starting_priced_contract}"
         )
 
+        seeded_prices_from_ib = False
+        if options.seed_from_ib:
+            print("\nSeeding missing contract price data from IB")
+            if options.dry_run:
+                print("DRY RUN: would run seed_price_data_from_IB")
+            else:
+                seed_price_data_from_IB(instrument_code, fill_gaps_only=True)
+            seeded_prices_from_ib = True
+
         rolls_performed = _roll_until_priced_contract_is_live(
             data=data,
             instrument_code=instrument_code,
             options=options,
         )
-
         ending_priced_contract = _current_priced_contract(diag_prices, instrument_code)
         print(
             f"Roll stage complete for {instrument_code}: {rolls_performed} roll(s), "
@@ -133,6 +144,7 @@ def revive_instrument(instrument_code: str, options: ReviveOptions) -> ReviveRes
         starting_priced_contract=starting_priced_contract,
         ending_priced_contract=ending_priced_contract,
         rolls_performed=rolls_performed,
+        seeded_prices_from_ib=seeded_prices_from_ib,
         refreshed_sampled_contracts=refreshed_sampled_contracts,
         downloaded_prices=downloaded_prices,
         refreshed_multiple_adjusted=refreshed_multiple_adjusted,
@@ -332,6 +344,12 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Do not forward-fill stale rows before each roll. Usually not useful for revive.",
     )
     parser.add_argument(
+        "--seed-from-ib",
+        action="store_true",
+        default=False,
+        help="Seed missing historical contract price data from IB before rolling.",
+    )
+    parser.add_argument(
         "--skip-sampled-contracts",
         action="store_true",
         default=False,
@@ -372,6 +390,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         as_of_date=args.as_of,
         max_rolls=args.max_rolls,
         allow_forward_fill=not args.no_forward_fill,
+        seed_from_ib=args.seed_from_ib,
         skip_sampled_contracts=args.skip_sampled_contracts,
         skip_price_download=args.skip_price_download,
         dry_run=args.dry_run,
@@ -387,6 +406,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "\nRevive complete: "
         f"{result.starting_priced_contract} -> {result.ending_priced_contract}; "
         f"rolls={result.rolls_performed}; "
+        f"seeded_from_ib={result.seeded_prices_from_ib}; "
         f"sampled_contracts={result.refreshed_sampled_contracts}; "
         f"downloaded_prices={result.downloaded_prices}; "
         f"multiple_adjusted={result.refreshed_multiple_adjusted}"
