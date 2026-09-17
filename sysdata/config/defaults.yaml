@@ -32,6 +32,7 @@ mongo_dump_directory: 'data.mongo_dump'
 mongo_dump_all: True
 echo_directory: 'data.echos'
 offsystem_backup_options: '-av'
+offsystem_backup_directory: 'data.backups_offsystem'
 #
 # Interactive brokers
 ib_ipaddress: 127.0.0.1
@@ -49,7 +50,7 @@ mongo_db: 'production'
 mongo_port: 27017
 #
 # Parquet store
-parquet_store: '/home/me/data/parquet'
+parquet_store: 'data.parquet'
 #
 # Needs to be consistent with what you are using in crontab
 echo_extension: '.txt'
