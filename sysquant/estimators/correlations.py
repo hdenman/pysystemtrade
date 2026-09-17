@@ -444,6 +444,11 @@ class CorrelationList:
     def most_recent_correlation_before_date(
         self, relevant_date: datetime.datetime = arg_not_supplied
     ) -> correlationEstimate:
+        if len(self.corr_list) == 0:
+            return create_boring_corr_matrix(
+                len(self.column_names), columns=self.column_names, offdiag=0.0
+            )
+
         if relevant_date is arg_not_supplied:
             index_of_date = -1
         else:
@@ -452,9 +457,12 @@ class CorrelationList:
                     relevant_date
                 )
             )
+            if index_of_date >= len(self.corr_list) or index_of_date < -len(self.corr_list):
+                return create_boring_corr_matrix(
+                    len(self.column_names), columns=self.column_names, offdiag=0.0
+                )
 
         return self.corr_list[index_of_date]
-
 
 def modify_correlation(
     corr_matrix: correlationEstimate,
