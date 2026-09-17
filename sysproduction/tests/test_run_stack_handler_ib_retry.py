@@ -396,6 +396,20 @@ class TestRunStackHandlerIBRetry(unittest.TestCase):
         self.assertEqual(result, "success")
         mock_reset.assert_called_once_with(mock_target)
         self.assertEqual(mock_target.update_total_capital.call_count, 1)
+    def test_connection_ib_close_connection_marks_client_disconnected(self):
+        conn = object.__new__(connectionIB)
+        mock_ib = MagicMock()
+        conn._ib = mock_ib
+        conn._ib_connection_config = {"client": 1}
+        conn._log = MagicMock()
+        conn.remove_event_handlers = MagicMock()
+
+        mock_ib.disconnect.side_effect = OSError(107, "Transport endpoint is not connected")
+
+        conn.close_connection()
+
+        mock_ib.disconnect.assert_called_once()
+        self.assertEqual(mock_ib.client.connState, mock_ib.client.DISCONNECTED)
 
 if __name__ == "__main__":
     unittest.main()
