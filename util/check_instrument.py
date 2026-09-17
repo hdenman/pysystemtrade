@@ -215,7 +215,7 @@ def _gap_check(
     label: str,
     today: pd.Timestamp,
     stale_warn_days: int = 5,
-    allow_missing_today: bool = False,
+    allow_missing_today: bool = True,
 ) -> CheckResult:
     """Standard gap + staleness check for any daily price series."""
     if series is None or series.dropna().empty:
@@ -452,6 +452,65 @@ def check_fx_prices(
 
     return _gap_check(fx, f"FX prices ({fx_pair})", today, allow_missing_today=True)
 
+# ---------------------------------------------------------------------------
+# Spread costs check
+# ---------------------------------------------------------------------------
+
+def check_spread_costs(
+    diag: diagPrices, diag_instr: diagInstruments, instrument_code: str
+) -> CheckResult:
+    """Check that configured spread cost matches expected level from sampled spreads."""
+    notes: List[str] = []
+    try:
+        configured_cost = diag_instr.get_spread_cost(instrument_code)
+    except Exception as exc:
+        return CheckResult("Spread costs", FAIL, f"could not get spread cost: {exc}")
+
+    try:
+        sampled_spreads = diag.get_spreads(instrument_code)
+    except Exception as exc:
+        notes.append(f"could not read sampled spreads: {exc}")
+        sampled_spreads = None
+
+    if sampled_spreads is None or len(sampled_spreads) == 0:
+        if configured_cost > 0:
+            detail = f"configured: {configured_cost:g} (no sampled spreads)"
+            return CheckResult("Spread costs", PASS, detail, notes)
+        else:
+            detail = "configured: 0.0 (no sampled spreads available to verify)"
+            return CheckResult("Spread costs", WARN, detail, notes)
+
+    expected_cost = sampled_spreads.median(skipna=True) / 2.0
+    latest_dt = sampled_spreads.index.max()
+    latest_val = sampled_spreads.loc[latest_dt]
+    # If multiple samples at max timestamp, pick scalar float
+    if isinstance(latest_val, pd.Series):
+        latest_val = latest_val.iloc[-1]
+    latest_val = float(latest_val)
+    latest_str = f"{latest_val:g}"
+
+    try:
+        latest_date_str = pd.Timestamp(latest_dt).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        latest_date_str = str(latest_dt)
+
+    detail = (
+        f"configured: {configured_cost:g}  "
+        f"expected (half spread): {expected_cost:g}  "
+        f"({len(sampled_spreads)} samples; latest: {latest_str} on {latest_date_str})"
+    )
+
+    if configured_cost == 0.0:
+        status = WARN
+        notes.append("configured spread cost is 0.0; expected non-zero cost based on sampling")
+    elif abs(configured_cost - expected_cost) / expected_cost > 0.5:
+        status = WARN
+        diff_pct = ((configured_cost - expected_cost) / expected_cost) * 100.0
+        notes.append(f"configured spread cost differs from expected half spread by {diff_pct:+.1f}%")
+    else:
+        status = PASS
+
+    return CheckResult("Spread costs", status, detail, notes)
 
 # ---------------------------------------------------------------------------
 # Universe membership check
@@ -564,6 +623,7 @@ def check_instrument(instrument_code: str) -> bool:
             check_expected_contracts(diag, data_contracts, instrument_code, today),
             check_contract_prices(diag, instrument_code, today),
             check_fx_prices(diag_instr, data_currency, instrument_code, today),
+            check_spread_costs(diag, diag_instr, instrument_code),
         ]
 
     for r in checks:

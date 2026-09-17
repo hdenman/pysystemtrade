@@ -39,3 +39,62 @@ def test_gap_check_ignores_known_2017_november_gap():
     assert result.status == PASS
     assert result.notes == []
     assert "2 market-closed day(s) ignored" in result.detail
+from unittest.mock import MagicMock
+from util.check_instrument import check_spread_costs, WARN, PASS
+
+
+def test_check_spread_costs_no_samples_zero_configured():
+    diag = MagicMock()
+    diag_instr = MagicMock()
+    diag_instr.get_spread_cost.return_value = 0.0
+    diag.get_spreads.return_value = pd.Series([], dtype=float)
+
+    res = check_spread_costs(diag, diag_instr, "TEST")
+    assert res.status == WARN
+    assert "no sampled spreads" in res.detail
+
+
+def test_check_spread_costs_no_samples_nonzero_configured():
+    diag = MagicMock()
+    diag_instr = MagicMock()
+    diag_instr.get_spread_cost.return_value = 0.05
+    diag.get_spreads.return_value = pd.Series([], dtype=float)
+
+    res = check_spread_costs(diag, diag_instr, "TEST")
+    assert res.status == PASS
+    assert "configured: 0.05" in res.detail
+
+
+def test_check_spread_costs_matching():
+    diag = MagicMock()
+    diag_instr = MagicMock()
+    diag_instr.get_spread_cost.return_value = 0.01
+    # Sampled full spread median = 0.02 -> half spread expected = 0.01
+    diag.get_spreads.return_value = pd.Series([0.02, 0.02, 0.02])
+
+    res = check_spread_costs(diag, diag_instr, "TEST")
+    assert res.status == PASS
+    assert res.notes == []
+
+
+def test_check_spread_costs_zero_configured_with_samples():
+    diag = MagicMock()
+    diag_instr = MagicMock()
+    diag_instr.get_spread_cost.return_value = 0.0
+    diag.get_spreads.return_value = pd.Series([0.02, 0.02])
+
+    res = check_spread_costs(diag, diag_instr, "TEST")
+    assert res.status == WARN
+    assert any("configured spread cost is 0.0" in n for n in res.notes)
+
+
+def test_check_spread_costs_mismatch():
+    diag = MagicMock()
+    diag_instr = MagicMock()
+    diag_instr.get_spread_cost.return_value = 0.05
+    # Expected half spread = 0.01, configured = 0.05 (400% diff > 50%)
+    diag.get_spreads.return_value = pd.Series([0.02, 0.02])
+
+    res = check_spread_costs(diag, diag_instr, "TEST")
+    assert res.status == WARN
+    assert any("differs from expected half spread" in n for n in res.notes)
