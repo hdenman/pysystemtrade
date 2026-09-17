@@ -159,6 +159,14 @@ class connectionIB(object):
             self.log.warning(
                 "Trying to disconnect IB client failed... ensure process is killed"
             )
+        finally:
+            # Ensure client state is marked disconnected so ib_async's __del__
+            # does not re-attempt disconnect() on an already torn-down socket
+            try:
+                if hasattr(self, "_ib") and self._ib is not None and hasattr(self._ib, "client"):
+                    self._ib.client.connState = self._ib.client.DISCONNECTED
+            except BaseException:
+                pass
 
 def get_broker_account() -> str:
     production_config = get_production_config()
