@@ -12,6 +12,13 @@ def correlation_over_time_for_returns(
     forward_fill_price_index=True,
     **kwargs,
 ) -> CorrelationList:
+    if returns_for_correlation.empty or len(returns_for_correlation) == 0:
+        return CorrelationList(
+            corr_list=[],
+            column_names=list(returns_for_correlation.columns),
+            fit_dates=[],
+        )
+
     index_prices_for_correlation = returns_for_correlation.cumsum()
     if forward_fill_price_index:
         index_prices_for_correlation = index_prices_for_correlation.ffill()
@@ -34,7 +41,12 @@ def correlation_over_time(
     **kwargs,
 ) -> CorrelationList:
     column_names = list(data_for_correlation.columns)
-
+    if data_for_correlation.empty or len(data_for_correlation) == 0:
+        return CorrelationList(
+            corr_list=[],
+            column_names=column_names,
+            fit_dates=[],
+        )
     # Generate time periods
     fit_dates = generate_fitting_dates(
         data_for_correlation,
