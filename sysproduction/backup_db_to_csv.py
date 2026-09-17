@@ -101,7 +101,7 @@ def get_data_and_create_csv_directories(logname):
     for class_name, path in class_paths.items():
         dir_name = Path(csv_dump_dir, path)
         class_paths[class_name] = str(dir_name)
-        Path(dir_name).mkdir(exist_ok=True)
+        Path(dir_name).mkdir(parents=True, exist_ok=True)
 
         data = dataBlob(csv_data_paths=class_paths, log_name=logname)
 

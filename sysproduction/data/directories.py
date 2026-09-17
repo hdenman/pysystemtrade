@@ -1,15 +1,25 @@
 import os
 
-from syscore.fileutils import get_resolved_pathname
+from syscore.fileutils import get_resolved_pathname, full_filename_for_file_in_home_dir
 from sysdata.config.production_config import get_production_config
 from sysproduction.data.backtest import get_directory_store_backtests
 
 production_config = get_production_config()
 
 
+def _resolve_user_or_project_path(pathname: str) -> str:
+    if os.path.isabs(pathname):
+        return pathname
+    if pathname.startswith("data.") or pathname.startswith("private."):
+        # standard package notation, e.g. data.backups_csv
+        sub = pathname.replace(".", os.sep)
+        return full_filename_for_file_in_home_dir(sub)
+    return get_resolved_pathname(pathname)
+
+
 def get_main_backup_directory():
     ans = production_config.get_element("offsystem_backup_directory")
-    return get_resolved_pathname(ans)
+    return _resolve_user_or_project_path(ans)
 
 
 def get_csv_backup_directory():
@@ -28,12 +38,12 @@ def get_parquet_backup_directory():
 
 def get_csv_dump_dir():
     ans = production_config.get_element("csv_backup_directory")
-    return get_resolved_pathname(ans)
+    return _resolve_user_or_project_path(ans)
 
 
 def get_mongo_dump_directory():
     ans = production_config.get_element("mongo_dump_directory")
-    return get_resolved_pathname(ans)
+    return _resolve_user_or_project_path(ans)
 
 
 def get_mongo_backup_directory():

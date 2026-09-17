@@ -29,6 +29,10 @@ class backupStateFiles(object):
 def backup_state_files_with_data_object(data):
     source_path = get_statefile_directory()
     destination_path = get_statefile_backup_directory()
+    if not os.path.exists(source_path):
+        data.log.warning(f"Statefile source path {source_path} does not exist, skipping offsystem copy")
+        return
+    os.makedirs(destination_path, exist_ok=True)
     data.log.debug("Copy from %s to %s" % (source_path, destination_path))
     options = get_production_config().get_element("offsystem_backup_options")
     os.system(f"rsync {options} {source_path} {destination_path}")

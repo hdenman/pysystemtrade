@@ -59,6 +59,10 @@ def dump_mongo_data(data: dataBlob):
 def backup_mongo_dump(data):
     source_path = get_mongo_dump_directory()
     destination_path = get_mongo_backup_directory()
+    if not os.path.exists(source_path):
+        data.log.warning(f"Mongo dump source path {source_path} does not exist, skipping offsystem copy")
+        return
+    os.makedirs(destination_path, exist_ok=True)
     data.log.debug("Copy from %s to %s" % (source_path, destination_path))
     options = get_production_config().get_element("offsystem_backup_options")
     os.system(f"rsync {options} {source_path} {destination_path}")

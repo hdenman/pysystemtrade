@@ -32,6 +32,10 @@ class backupParquet(object):
 def backup_parquet_data_to_remote_with_data(data):
     source_path = get_parquet_directory(data)
     destination_path = get_parquet_backup_directory()
+    if not os.path.exists(source_path):
+        data.log.warning(f"Parquet source path {source_path} does not exist, skipping offsystem copy")
+        return
+    os.makedirs(destination_path, exist_ok=True)
     data.log.debug("Copy from %s to %s" % (source_path, destination_path))
     options = get_production_config().get_element("offsystem_backup_options")
     os.system(f"rsync {options} {source_path} {destination_path}")

@@ -218,7 +218,7 @@ def store_backtest_state(data, system, strategy_name="default_strategy"):
 
 def ensure_backtest_directory_exists(strategy_name):
     full_directory = get_backtest_directory_for_strategy(strategy_name)
-    Path(full_directory).mkdir(exist_ok=True)
+    Path(full_directory).mkdir(parents=True, exist_ok=True)
 
 
 def rchop(s, suffix):
