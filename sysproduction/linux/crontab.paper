@@ -1,0 +1,20 @@
+# pst-paper crontab
+# Echo files are written under $ECHO/YYYY-MM-DD/<process>.txt by wrappers.
+
+SHELL=/bin/bash
+PATH=/run/current-system/sw/bin:/usr/bin:/bin
+
+# Startup
+@reboot /srv/pysystemtrade/paper/bin/start-ferretdb
+@reboot /srv/pysystemtrade/paper/bin/run-startup
+
+# Long-running trading and capital processes
+15 00 * * 1-5 /srv/pysystemtrade/paper/bin/run-stack-handler
+00 01 * * 1-5 /srv/pysystemtrade/paper/bin/run-capital-update
+
+# Local Mongo-only contract metadata update
+30 07 * * 1-5 /srv/pysystemtrade/paper/bin/update-sampled-contracts
+
+# Wait for today's live shared-price marker, then run:
+# backtest -> strategy orders -> cleaners -> backups -> reports
+00 20 * * 1-5 /srv/pysystemtrade/paper/bin/run-daily-chain paper

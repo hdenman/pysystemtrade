@@ -1,0 +1,21 @@
+# pst-live crontab
+# Echo files are written under $ECHO/YYYY-MM-DD/<process>.txt by wrappers.
+
+SHELL=/bin/bash
+PATH=/run/current-system/sw/bin:/usr/bin:/bin
+
+# Startup
+@reboot /srv/pysystemtrade/live/bin/start-ferretdb
+@reboot /srv/pysystemtrade/live/bin/run-startup
+
+# Long-running trading and capital processes
+15 00 * * 1-5 /srv/pysystemtrade/live/bin/run-stack-handler
+00 01 * * 1-5 /srv/pysystemtrade/live/bin/run-capital-update
+
+# Morning FX and contract sampling
+05 07 * * 1-5 /srv/pysystemtrade/live/bin/run-daily-fx-and-contract-updates
+
+# Completion-driven daily chain:
+# historical prices -> multiple/adjusted prices -> readiness marker ->
+# backtest -> strategy orders -> cleaners -> backups -> reports
+00 20 * * 1-5 /srv/pysystemtrade/live/bin/run-daily-chain live

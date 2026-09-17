@@ -485,42 +485,30 @@ sudo systemctl enable --now ibgateway-live.service
 
 ### 7. Install live cron
 
-Live owns shared data collection. It should run the price/data jobs.
+Live owns shared data collection. Its evening work is a completion-driven chain:
 
-Example live crontab:
-
-```cron
-# pst-live crontab
-
-# Long-running stack handler / trading loop
-15 00 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_stack_handler >> $ECHO_PATH/run_stack_handler.txt 2>&1
-
-# Live account capital and allocation
-45 00 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_capital_update >> $ECHO_PATH/run_capital_update.txt 2>&1
-
-# Shared market-data writes: live only
-30 06 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_daily_fx_and_contract_updates >> $ECHO_PATH/run_daily_fx_and_contract_updates.txt 2>&1
-05 07 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_daily_price_updates >> $ECHO_PATH/run_daily_price_updates.txt 2>&1
-00 19 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_daily_update_multiple_adjusted_prices >> $ECHO_PATH/run_daily_update_multiple_adjusted_prices.txt 2>&1
-
-# Strategy/order flow after shared data is updated
-30 20 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_systems >> $ECHO_PATH/run_systems.txt 2>&1
-45 20 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_strategy_order_generator >> $ECHO_PATH/run_strategy_order_generator.txt 2>&1
-
-# Housekeeping
-00 21 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_cleaners >> $ECHO_PATH/run_cleaners.txt 2>&1
-15 21 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_backups >> $ECHO_PATH/run_backups.txt 2>&1
-30 21 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_reports >> $ECHO_PATH/run_reports.txt 2>&1
-
-# Startup
-@reboot $HOME/.profile; $SCRIPT_PATH/startup >> $ECHO_PATH/startup.txt 2>&1
+```text
+historical contract prices
+  -> multiple and adjusted prices
+  -> publish today's shared-price readiness marker
+  -> system backtest
+  -> strategy order generation
+  -> cleaners -> backups -> reports
 ```
 
-Install:
+`run_daily_chain` verifies each managed process actually started and completed during the current chain run. A zero exit status from a process that declined to start is not treated as success.
+
+Install the chain launcher and reference crontab:
 
 ```bash
-sudo -u pst-live crontab /srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/crontab.live
+sudo install -o pst-live -g pst-live -m 0755 \
+  /srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/scripts/run_daily_chain \
+  /srv/pysystemtrade/live/bin/run-daily-chain
+sudo -u pst-live crontab \
+  /srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/crontab.live
 ```
+
+The reference cron starts the chain at 20:00. Configure the live private control file so every process in the chain has a 20:00 start gate; the chain, rather than later clock gates, determines ordering. FX and contract sampling remain independent at 07:05.
 
 ## Phase 3: disable data collection in `pst-paper` so it depends on `pst-live`
 
@@ -598,82 +586,35 @@ If paper does not need fresh local contract metadata, you can skip this wrapper 
 
 ### 3. Schedule paper after live data completion
 
-Paper should run systems only after live has completed:
+Paper must not guess when live market-data processing has finished. Install the same chain launcher under the paper account:
 
-1. `run_daily_fx_and_contract_updates`
-2. `run_daily_price_updates`
-3. `run_daily_update_multiple_adjusted_prices`
-
-Simple cron-based schedule:
-
-```cron
-# pst-paper crontab
-
-# Paper trading loop
-15 00 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_stack_handler >> $ECHO_PATH/run_stack_handler.txt 2>&1
-
-# Paper account capital/allocation
-45 00 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_capital_update >> $ECHO_PATH/run_capital_update.txt 2>&1
-
-# Optional local Mongo-only contract metadata update
-30 07 * * 1-5 /srv/pysystemtrade/paper/bin/update-sampled-contracts
-
-# No shared price writers here.
-# No run_daily_price_updates.
-# No run_daily_update_multiple_adjusted_prices.
-# No stock run_daily_fx_and_contract_updates unless intentionally modified.
-
-# Strategy/order flow after live has refreshed shared data
-35 20 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_systems >> $ECHO_PATH/run_systems.txt 2>&1
-50 20 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_strategy_order_generator >> $ECHO_PATH/run_strategy_order_generator.txt 2>&1
-
-# Housekeeping
-05 21 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_cleaners >> $ECHO_PATH/run_cleaners.txt 2>&1
-20 21 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_backups >> $ECHO_PATH/run_backups.txt 2>&1
-35 21 * * 1-5 $HOME/.profile; $SCRIPT_PATH/run_reports >> $ECHO_PATH/run_reports.txt 2>&1
-
-# Startup
-@reboot $HOME/.profile; $SCRIPT_PATH/startup >> $ECHO_PATH/startup.txt 2>&1
+```bash
+sudo install -o pst-paper -g pst-paper -m 0755 \
+  /srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/scripts/run_daily_chain \
+  /srv/pysystemtrade/paper/bin/run-daily-chain
+sudo -u pst-paper crontab \
+  /srv/pysystemtrade/code/pysystemtrade/sysproduction/linux/crontab.paper
 ```
 
-This is simple but time-based. If live data updates run late, paper can still consume stale data.
-
-### 4. Prefer a completion sentinel for stronger dependency
-
-Better: have live write a date-stamped sentinel after successful shared data update, and have paper check it before `run_systems`.
-
-Concept:
+The paper chain waits for:
 
 ```text
-pst-live finishes update_multiple_adjusted_prices
-  -> writes /srv/pysystemtrade/shared-parquet/.prices-ready/YYYY-MM-DD
-pst-paper run_systems wrapper
-  -> checks today's sentinel exists
-  -> exits non-zero or waits if missing
+/srv/pysystemtrade/shared-parquet/.prices-ready/YYYY-MM-DD
 ```
 
-Example live post-update command:
+Live publishes that file atomically only after both historical-price and multiple/adjusted-price processing complete successfully. Paper then runs:
 
-```bash
-mkdir -p /srv/pysystemtrade/shared-parquet/.prices-ready
-date +%F > /srv/pysystemtrade/shared-parquet/.prices-ready/$(date +%F)
+```text
+system backtest
+  -> strategy order generation
+  -> cleaners -> backups -> reports
 ```
 
-Example paper wrapper check:
+The default readiness timeout is four hours. A missing marker or failed managed process stops the chain; later steps are not run. Configure the paper private control file with 20:00 start gates for the chained processes so no child waits on an obsolete clock time.
 
-```bash
-READY_FILE="/srv/pysystemtrade/shared-parquet/.prices-ready/$(date +%F)"
-if [ ! -f "$READY_FILE" ]; then
-  echo "Shared prices not ready: $READY_FILE missing"
-  exit 1
-fi
-. ~/.profile
-. p sysproduction.run_systems.run_systems
-```
+This preserves separate live and paper trading state while giving both systems the same successfully refreshed shared market data.
 
-This avoids relying only on clock times.
-
-### 5. Permissions safety
+### 4. Permissions safety
 
 After live owns shared market-data writes, make paper unable to write those directories if practical.
 
